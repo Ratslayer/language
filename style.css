@@ -5,7 +5,7 @@ header, nav, .languages { display: flex; flex-wrap: wrap; gap: .9rem; align-item
 header, nav { justify-content: space-between; }
 h1, h2, article { font-family: Georgia,serif; }
 h1 { font-size: clamp(1.7rem,5vw,2.4rem); font-weight: 500; }
-h2 { font-size: 1.2rem; overflow-wrap: anywhere; }
+#title { margin: .6rem 0; line-height: 1.2; overflow-wrap: anywhere; }
 button, select { font: inherit; color: inherit; }
 button, select { background: #fffdf7; border: 1px solid #a9b1a4; border-radius: .5rem; padding: .5rem .75rem; cursor: pointer; }
 button:disabled { opacity: .5; }
@@ -17,10 +17,33 @@ article { font-size: 1.3rem; line-height: 1.8; white-space: pre-wrap; overflow-w
 article button { all: unset; font: inherit; cursor: pointer; }
 article button:is(:focus-visible,.active) { background: #d3e4ba; outline: 1px solid #68835e; border-radius: .15rem; }
 nav { margin-top: 1.5rem; }
-aside { position: fixed; z-index: 1; width: min(19rem,calc(100vw - 16px)); max-height: 48vh; overflow: auto; padding: .85rem 1rem; border: 1px solid #81917e; border-radius: .8rem; background: #fffef9; box-shadow: 0 6px 20px #22332226; }
-#close { float: right; margin-left: .4rem; }
+#popup {
+  position: fixed;
+  z-index: 2;
+  left: .5rem;
+  right: .5rem;
+  bottom: max(.5rem, env(safe-area-inset-bottom));
+  margin: 0 auto;
+  max-width: 24rem;
+  max-height: 48vh;
+  max-height: 48dvh;
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+  padding: .65rem .9rem;
+  border: 1px solid #81917e;
+  border-radius: .8rem;
+  background: #fffef9;
+  box-shadow: 0 6px 20px #22332226;
+  overflow: auto;
+}
+#popup.atTop { top: max(.5rem, env(safe-area-inset-top)); bottom: auto; }
+.translationHeading { display: flex; align-items: start; justify-content: space-between; gap: .6rem; }
+#word { align-self: center; min-width: 0; line-height: 1.25; }
+#close { flex: none; padding: .25rem .65rem; }
 #word, #answer { overflow-wrap: anywhere; white-space: pre-line; }
-#sentence { margin-top: .7rem; font-size: .85rem; }
+#answer { min-height: 1.5em; overflow-y: auto; }
+#sentence { flex: none; align-self: start; font-size: .85rem; }
 [hidden] { display: none !important; }
 #packTools { display:flex; flex-wrap:wrap; align-items:baseline; gap:.75rem; margin-top:.8rem; }
 #packActions summary { cursor:pointer; }

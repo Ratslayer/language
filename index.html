@@ -20,31 +20,37 @@
       <button id="importBook">Open local file…</button>
     </div>
   </section>
-  <div id="reader">
-  <button id="backToBooks" hidden>‹ Books</button>
-  <header><h1>Language Reader</h1><button id="open" disabled>Open .txt file</button></header>
-  <input id="file" type="file" accept=".txt,text/plain" hidden>
-  <section class="languages" aria-label="Languages">
-    <label>Reading in <select id="source"></select></label>
-    <label>Translate to <select id="target"></select></label>
+  <section id="fileTools" aria-label="Local files">
+    <button id="filesBack" hidden>‹ Books</button>
+    <header><h1>Local files</h1><button id="open" disabled>Open .txt file</button></header>
+    <input id="file" type="file" accept=".txt,text/plain" hidden>
+    <section class="languages" aria-label="Languages">
+      <label>Reading in <select id="source"></select></label>
+      <label>Translate to <select id="target"></select></label>
+    </section>
+    <div id="packTools" hidden><button id="packOpen">Open book or language file</button>
+      <details id="packActions" hidden><summary>Offline files</summary>
+        <button id="prepare">Prepare this page</button>
+        <button id="exportLang">Save language file…</button>
+        <button id="exportBook">Save book file…</button>
+      </details>
+    </div>
+    <p id="fileStatus" role="status"></p>
   </section>
-  <div id="packTools" hidden><button id="packOpen">Open book or language file</button>
-    <details id="packActions" hidden><summary>Offline files</summary>
-      <button id="prepare">Prepare this page</button>
-      <button id="exportLang">Save language file…</button>
-      <button id="exportBook">Save book file…</button>
-    </details>
-  </div>
-  <p id="progress" role="status" hidden></p>
-  <p id="status" role="status"></p>
-  <h2 id="title"></h2>
-  <article id="passage" dir="auto" aria-label="Reading text"></article>
-  <nav hidden><button id="prev">Previous</button><span id="count"></span><button id="next">Next</button></nav>
-  </div>
+  <section id="reader" aria-labelledby="title" hidden>
+    <button id="backToBooks">‹ Books</button>
+    <h1 id="title"></h1>
+    <p id="progress" role="status" hidden></p>
+    <p id="status" role="status"></p>
+    <article id="passage" dir="auto" aria-label="Reading text"></article>
+    <nav hidden><button id="prev">Previous</button><span id="count"></span><button id="next">Next</button></nav>
+  </section>
 </main>
 <aside id="popup" hidden aria-label="Translation">
-  <button id="close" aria-label="Close translation">×</button>
-  <strong id="word"></strong><div id="answer" role="status" dir="auto"></div>
+  <div class="translationHeading"><strong id="word"></strong>
+    <button id="close" aria-label="Close translation">×</button>
+  </div>
+  <div id="answer" role="status" dir="auto"></div>
   <button id="sentence">Translate sentence</button>
 </aside>
 </body></html>
