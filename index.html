@@ -43,14 +43,15 @@
     <p id="progress" role="status" hidden></p>
     <p id="status" role="status"></p>
     <article id="passage" dir="auto" aria-label="Reading text"></article>
+    <span id="popup" role="region" lang="en" dir="ltr" aria-label="Translation" hidden>
+      <span class="translationHeading">
+        <strong id="word" dir="auto"></strong>
+        <button id="close" aria-label="Close translation">×</button>
+      </span>
+      <span id="answer" role="status" dir="auto"></span>
+      <button id="sentence">Translate sentence</button>
+    </span>
     <nav hidden><button id="prev">Previous</button><span id="count"></span><button id="next">Next</button></nav>
   </section>
 </main>
-<aside id="popup" hidden aria-label="Translation">
-  <div class="translationHeading"><strong id="word"></strong>
-    <button id="close" aria-label="Close translation">×</button>
-  </div>
-  <div id="answer" role="status" dir="auto"></div>
-  <button id="sentence">Translate sentence</button>
-</aside>
 </body></html>
