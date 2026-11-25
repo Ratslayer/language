@@ -38,7 +38,7 @@ for (const id of ['source', 'target']) {
   for (const [code, name] of Object.entries(languages)) $(id).add(new Option(name, code));
 }
 const storageKey = 'language-reader-v1';
-let state = { source:'de', target:'en', page:0, name:'', hash:'', savedText:'', cache:[] };
+let state = { source:'de', target:'en', page:0, name:'', hash:'', savedText:'', cache:[], bookmarks:{} };
 let book = '';
 let pages = [];
 let selection;
@@ -71,6 +71,61 @@ function persist() {
 }
 function save() { persist().catch(report); }
 
+// Only the rendered book owns scroll events. Catalogue and loading screens never write its offset.
+let readingPosition = null;
+let scrollSave = 0;
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+function bookmarkFor(id) {
+  const saved = state.bookmarks[id];
+  // Earlier versions stored page numbers directly and kept the open book's page separately.
+  if (Number.isInteger(saved?.page)) return saved;
+  const previous = Number.isInteger(saved) ? saved : 0;
+  const page = id === (state.packId || state.hash) ? state.page : previous;
+  return { page, scrollY:0 };
+}
+function recordScroll() {
+  if (!readingPosition) return false;
+  const y = Math.max(0, Math.round(window.scrollY));
+  if (readingPosition.scrollY === y) return false;
+  readingPosition.scrollY = y;
+  return true;
+}
+function flushScroll() {
+  const changed = recordScroll();
+  if (changed || scrollSave) save();
+  clearTimeout(scrollSave);
+  scrollSave = 0;
+}
+function stopTracking() {
+  flushScroll();
+  readingPosition = null;
+}
+function trackPage(offset) {
+  if ($('reader').hidden || !state.hash) return;
+  window.scrollTo(0, Number.isFinite(offset) ? offset : 0);
+  readingPosition = { page:state.page, scrollY:Math.max(0, Math.round(window.scrollY)) };
+  state.bookmarks[state.hash] = readingPosition;
+}
+window.addEventListener('scroll', () => {
+  if (recordScroll() && !scrollSave) {
+    save();
+    scrollSave = setTimeout(flushScroll, 180);
+  }
+}, { passive:true });
+window.addEventListener('pagehide', flushScroll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushScroll(); });
+
+function updatePageControls(total) {
+  const number = state.page + 1;
+  $('pageJump').hidden = !total;
+  $('pageNumber').max = total;
+  $('pageNumber').value = number;
+  $('pageTotal').textContent = 'of ' + total;
+  $('count').textContent = number + ' / ' + total;
+  document.querySelector('nav').hidden = total < 2;
+  $('prev').disabled = number <= 1;
+  $('next').disabled = number >= total;
+}
 function paginate() {
   pages = [];
   words = new Intl.Segmenter(state.source, { granularity:'word' });
@@ -116,16 +171,15 @@ function render() {
     }
   }
   $('title').textContent = state.name;
-  $('count').textContent = (state.page + 1) + ' / ' + pages.length;
-  document.querySelector('nav').hidden = pages.length < 2;
-  $('prev').disabled = !state.page;
-  $('next').disabled = state.page + 1 >= pages.length;
+  updatePageControls(pages.length);
 }
 function wordButton(text, context) {
   const button = document.createElement('button');
   button.className = 'passageWord';
   button.textContent = text;
   button.onclick = () => {
+    if (selection?.button === button) { closeTranslation(); return; }
+    flushScroll();
     dismiss();
     selection = { ...context, button };
     button.classList.add('active');
@@ -166,14 +220,14 @@ async function lookup(full) {
   try {
     const result = await enqueue(() => version === requestVersion ? call('ai.run', {prompt, profile:'fast-text'}) : null);
     if (version !== requestVersion) return;
-    if (typeof result !== 'string' || !result.trim()) throw new Error('Empty translation. Tap the word to retry.');
+    if (typeof result !== 'string' || !result.trim()) throw new Error('Empty translation. Close and tap the word to retry.');
     state.cache.push([key,result.trim()]);
     if (state.cache.length > 200) state.cache.shift();
     save();
     answer.textContent = result.trim();
   } catch (error) {
     if (version !== requestVersion) return;
-    answer.textContent = error.message || 'Translation failed. Tap the word to retry.';
+    answer.textContent = error.message || 'Translation failed. Close and tap the word to retry.';
   }
 }
 async function openBook(name, text) {
@@ -181,14 +235,16 @@ async function openBook(name, text) {
   const bytes = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join('');
+  stopTracking();
+  const saved = bookmarkFor(hash);
   leavePack();
-  if (state.hash !== hash) state.page = 0;
+  state.page = saved.page;
   book = text;
   Object.assign(state, { name, hash, savedText:byteCount(JSON.stringify(text)) < 180000 ? text : '' });
   paginate();
   render();
-  showView('reader');
   $('status').textContent = state.savedText ? 'Tap a word for its meaning.' : 'Tap a word for its meaning. Reopen this file to resume next time.';
+  showView('reader');
   save();
 }
 $('open').onclick = async () => {
@@ -213,9 +269,25 @@ for (const id of ['source','target']) $(id).onchange = () => {
   if (id === 'source' && book) paginate();
   render(); save();
 };
-for (const [id, step] of [['prev',-1],['next',1]]) $(id).onclick = () => {
-  state.page = Math.max(0, Math.min((pack?.pages ?? pages.length)-1,state.page+step)); render(); window.scrollTo(0,0); save();
+async function goToPage(page) {
+  const total = pack?.pages ?? pages.length;
+  if (!Number.isInteger(page) || page < 0 || page >= total) return;
+  if (pack) {
+    if (!await renderPack(page)) return;
+  } else {
+    stopTracking();
+    state.page = page;
+    render();
+  }
+  trackPage(0);
+  save();
+}
+$('pageJump').onsubmit = event => {
+  event.preventDefault();
+  $('pageNumber').blur();
+  goToPage($('pageNumber').valueAsNumber - 1).catch(report);
 };
+for (const [id, step] of [['prev',-1],['next',1]]) $(id).onclick = () => goToPage(state.page + step).catch(report);
 function closeTranslation() {
   const button = selection?.button;
   dismiss();
@@ -232,14 +304,15 @@ async function init() {
   const raw = bridge ? await call('storage.read') : localStorage.getItem(storageKey);
   if (bridge) $('open').textContent = 'Open TXT or PDF';
   if (raw) Object.assign(state, JSON.parse(raw));
+  state.bookmarks ||= {};
   $('source').value = state.source;
   $('target').value = state.target;
   book = state.savedText;
-  if (book) paginate();
+  if (book) { state.page = bookmarkFor(state.hash).page; paginate(); }
   render();
   if (book) {
-    showView('reader');
     $('status').textContent = 'Tap a word for its meaning.';
+    showView('reader');
   }
   $('fileStatus').textContent = state.name && !book
     ? 'Reopen the file to resume at your saved page.' : bridge ? 'Open a text file or PDF. For scans, choose the reading language first.' : 'Open a UTF-8 text file to start reading.';
@@ -292,33 +365,39 @@ function openDocument(file) {
   return file.format === 'reader.book.1' ? enterPack(file) : openBook(file.name,file.text);
 }
 async function enterPack(info, changing = true) {
-  if (changing && info.book !== state.packId) {
-    if (state.packId) {
-      state.bookmarks ||= {};
-      state.bookmarks[state.packId] = state.page;
-    }
-    stopGeneration(); state.page = state.bookmarks?.[info.book] || 0;
-  }
+  stopTracking();
+  const saved = bookmarkFor(info.book);
+  if (changing && info.book !== state.packId) stopGeneration();
   pack = info;
   state.packId = info.book;
-  state.page = Math.min(Math.max(0,state.page),info.pages-1);
+  state.page = Math.min(Math.max(0, saved.page), info.pages - 1);
   state.source = info.lang; state.savedText = ''; state.name = info.title;
   state.hash = info.book; book = '';
   $('source').value = info.lang; $('source').disabled = true;
   $('packActions').hidden = false;
-  await renderPack();
+  if (!await renderPack()) return;
+  if (info.notice) $('status').textContent = info.notice;
   showView('reader');
   save();
   const job = state.job;
   if (!generation && job && job.book === info.book && job.lang === state.target)
     preparePage(job, true).catch(report);
 }
-async function renderPack() {
+async function renderPack(page = state.page) {
   const revision = ++pageVersion;
-  const active = pack, page = state.page, lang = state.target;
+  const active = pack, lang = state.target;
   dismiss();
-  const result = await call('book.page',{book:active.book,page,lang});
-  if (revision !== pageVersion) return;
+  let result;
+  try {
+    result = await call('book.page',{book:active.book,page,lang});
+  } catch (error) {
+    if (revision !== pageVersion) return false;
+    $('pageNumber').value = state.page + 1;
+    throw error;
+  }
+  if (revision !== pageVersion) return false;
+  stopTracking();
+  state.page = page;
   dismiss();
   rows = result;
   const article = $('passage');
@@ -337,11 +416,10 @@ async function renderPack() {
     paragraph.append(row.text.slice(pos));
   }
   $('title').textContent = active.title + (rows[0].chapter ? ' · '+rows[0].chapter : '');
-  $('count').textContent = (page+1)+' / '+active.pages;
-  document.querySelector('nav').hidden = active.pages<2;
-  $('prev').disabled = page===0; $('next').disabled = page+1===active.pages;
+  updatePageControls(active.pages);
   $('status').textContent = 'Tap a word for its meaning.';
   updateProgress();
+  return true;
 }
 function updateProgress() {
   if (!pack) return;
@@ -403,7 +481,7 @@ $('packOpen').onclick = async () => {
     if (item.format==='reader.book.1') await enterPack(item);
     else {
       stopGeneration(); state.target=item.lang; $('target').value=item.lang;
-      await renderPack(); showView('reader'); save();
+      if (await renderPack()) { showView('reader'); save(); }
     }
   } catch(error) {report(error);}
 };
@@ -420,6 +498,8 @@ function shelfMode(refreshing=false) {
   return call('book.shelfMode',{visible:!$('shelf').hidden,refreshing});
 }
 function showView(id) {
+  if (id !== 'reader' && !$('reader').hidden) pageVersion++;
+  stopTracking();
   dismiss();
   for (const view of ['shelf', 'fileTools', 'reader']) $(view).hidden = view !== id;
   if (id === 'fileTools') {
@@ -427,7 +507,10 @@ function showView(id) {
     $('filesBack').textContent = hasShelf ? '‹ Books' : '‹ Return to book';
     $('fileStatus').textContent = pack ? pack.title + ' · Page ' + (state.page + 1) : '';
   }
-  window.scrollTo(0, 0);
+  if (id === 'reader') {
+    const saved = bookmarkFor(state.hash);
+    trackPage(saved.page === state.page ? saved.scrollY : 0);
+  } else window.scrollTo(0, 0);
   shelfMode().catch(report);
 }
 function shelfMessage(message) {
@@ -481,7 +564,6 @@ async function selectBook(item) {
     if(state.target!=='en')stopGeneration();
     state.target='en';$('target').value='en';
     await enterPack(info);
-    if(info.notice) $('status').textContent=info.notice;
   } catch(error){shelfMessage(error.message);}
   finally{setShelfBusy(false);}
 }
