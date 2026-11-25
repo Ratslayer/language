@@ -53,7 +53,10 @@ let shelfBusy = false;
 const catalogueFileId = '1_f_zhiRS4UjK8lzw5aXr80Iv2G7RpVTd';
 let catalogueReady = false;
 const byteCount = text => new TextEncoder().encode(text).length;
-function report(error) { $('status').textContent = error.message; }
+function report(error) {
+  if (!$('shelf').hidden) shelfMessage(error.message);
+  else ($('fileTools').hidden ? $('status') : $('fileStatus')).textContent = error.message;
+}
 function persist() {
   return enqueue(async () => {
     let data = JSON.stringify(state);
@@ -124,35 +127,25 @@ function render() {
   $('prev').disabled = !state.page;
   $('next').disabled = state.page + 1 >= pages.length;
 }
-function position() {
-  if (!selection) return;
-  const anchor = selection.button.getBoundingClientRect();
-  const box = $('popup');
-  const left = Math.max(8, Math.min(anchor.left, innerWidth - box.offsetWidth - 8));
-  const top = anchor.bottom + box.offsetHeight + 12 < innerHeight
-    ? anchor.bottom + 5 : Math.max(8, anchor.top - box.offsetHeight - 5);
-  box.style.left = left + 'px';
-  box.style.top = top + 'px';
-}
 async function lookup(full) {
   const version = ++requestVersion;
   const { sentence, index, button } = selection;
   const word = button.textContent;
+  const popup = $('popup');
+  if (!full) popup.classList.toggle('atTop', button.getBoundingClientRect().top > document.documentElement.clientHeight / 2);
+  popup.hidden = false;
+  $('word').textContent = full ? 'Sentence' : word;
+  $('sentence').hidden = full;
+  $('answer').scrollTop = 0;
   if (selection.row?.entry) {
     const entry = selection.row.entry;
     const group = entry.groups.find(g => g[0].includes(selection.wordId));
-    $('popup').hidden = false;
-    $('word').textContent = full ? 'Sentence' : word;
     $('answer').textContent = full ? entry.translation : group[2] + '\n' + group[1];
-    $('sentence').hidden = full; position(); return;
+    return;
   }
   const key = JSON.stringify([state.source, state.target, sentence, full ? -1 : index]);
   const cached = state.cache.find(entry => entry[0] === key);
-  $('popup').hidden = false;
-  $('word').textContent = full ? 'Sentence' : word;
   $('answer').textContent = cached ? cached[1] : 'Translating…';
-  $('sentence').hidden = full;
-  position();
   if (cached) return;
   const instruction = full ? 'Translate the passage. Return only the translation.'
     : 'Give the meaning of the selected word in this passage, accounting for idioms and separable verbs. Return two short lines: contextual translation, then source-language dictionary form.';
@@ -172,19 +165,19 @@ async function lookup(full) {
     if (version !== requestVersion) return;
     $('answer').textContent = error.message;
   }
-  position();
 }
 async function openBook(name, text) {
-  leavePack();
   if (!text.trim()) throw new Error('This text file is empty.');
   const bytes = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join('');
+  leavePack();
   if (state.hash !== hash) state.page = 0;
   book = text;
   Object.assign(state, { name, hash, savedText:byteCount(JSON.stringify(text)) < 180000 ? text : '' });
   paginate();
   render();
+  showView('reader');
   $('status').textContent = state.savedText ? 'Tap a word for its meaning.' : 'Tap a word for its meaning. Reopen this file to resume next time.';
   save();
 }
@@ -219,8 +212,6 @@ document.addEventListener('pointerdown', e => {
   if (!e.target.closest('#popup, #passage button')) dismiss();
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') dismiss(); });
-window.addEventListener('resize', position);
-window.addEventListener('scroll', position, {passive:true});
 async function init() {
   const raw = bridge ? await call('storage.read') : localStorage.getItem(storageKey);
   if (bridge) $('open').textContent = 'Open TXT or PDF';
@@ -230,7 +221,11 @@ async function init() {
   book = state.savedText;
   if (book) paginate();
   render();
-  $('status').textContent = book ? 'Tap a word for its meaning.' : state.name
+  if (book) {
+    showView('reader');
+    $('status').textContent = 'Tap a word for its meaning.';
+  }
+  $('fileStatus').textContent = state.name && !book
     ? 'Reopen the file to resume at your saved page.' : bridge ? 'Open a text file or PDF. For scans, choose the reading language first.' : 'Open a UTF-8 text file to start reading.';
   if (bridge) {
     try { packSupport = await call('book.available'); } catch { packSupport = false; }
@@ -251,15 +246,16 @@ async function init() {
       try {
         const library = await call('book.shelf');
         hasShelf = true;
-        $('backToBooks').hidden = false;
+        $('backToBooks').textContent = '‹ Books';
         if (!incoming) {
-          showShelf(); drawShelf(library);
+          showView('shelf'); drawShelf(library);
           if (!catalogueReady) await refreshShelf();
         }
         else await shelfMode();
       } catch (error) { if (error.message !== 'Unsupported book action.' && error.message !== 'Unsupported tool action.') report(error); }
     }
   }
+  if (!hasShelf) $('backToBooks').textContent = '‹ Local files';
   $('open').disabled = false;
 }
 
@@ -295,6 +291,7 @@ async function enterPack(info, changing = true) {
   $('source').value = info.lang; $('source').disabled = true;
   $('packActions').hidden = false;
   await renderPack();
+  showView('reader');
   save();
   const job = state.job;
   if (!generation && job && job.book === info.book && job.lang === state.target)
@@ -394,7 +391,7 @@ $('packOpen').onclick = async () => {
     if (item.format==='reader.book.1') await enterPack(item);
     else {
       stopGeneration(); state.target=item.lang; $('target').value=item.lang;
-      await renderPack(); save();
+      await renderPack(); showView('reader'); save();
     }
   } catch(error) {report(error);}
 };
@@ -402,7 +399,7 @@ for (const id of ['exportBook','exportLang']) $(id).onclick = async () => {
   try {
     const bookId = pack.book, lang = id==='exportBook'?'':state.target;
     const saved=await enqueue(()=>call('book.export',{book:bookId,lang}));
-    if (saved) $('status').textContent='Offline file saved.';
+    if (saved) $('fileStatus').textContent='Offline file saved.';
   } catch(error){report(error);}
 };
 
@@ -410,13 +407,16 @@ function shelfMode(refreshing=false) {
   if (!hasShelf) return Promise.resolve();
   return call('book.shelfMode',{visible:!$('shelf').hidden,refreshing});
 }
-function showShelf() {
-  dismiss(); $('reader').hidden=true; $('shelf').hidden=false;
-  window.scrollTo(0,0); shelfMode().catch(report);
-}
-function showReading() {
-  $('shelf').hidden=true; $('reader').hidden=false;
-  window.scrollTo(0,0); shelfMode().catch(report);
+function showView(id) {
+  dismiss();
+  for (const view of ['shelf', 'fileTools', 'reader']) $(view).hidden = view !== id;
+  if (id === 'fileTools') {
+    $('filesBack').hidden = !hasShelf && !pack && !book;
+    $('filesBack').textContent = hasShelf ? '‹ Books' : '‹ Return to book';
+    $('fileStatus').textContent = pack ? pack.title + ' · Page ' + (state.page + 1) : '';
+  }
+  window.scrollTo(0, 0);
+  shelfMode().catch(report);
 }
 function shelfMessage(message) {
   $('shelfStatus').textContent=message || '';
@@ -469,15 +469,18 @@ async function selectBook(item) {
     if(state.target!=='en')stopGeneration();
     state.target='en';$('target').value='en';
     await enterPack(info);
-    showReading();
     if(info.notice) $('status').textContent=info.notice;
   } catch(error){shelfMessage(error.message);}
   finally{setShelfBusy(false);}
 }
 $('refreshBooks').onclick=()=>refreshShelf(true);
-$('importBook').onclick=()=>{showReading();};
-function returnToShelf() {if(hasShelf){showShelf();refreshShelf();}}
-$('backToBooks').onclick=returnToShelf;
+$('importBook').onclick = () => showView('fileTools');
+function returnToShelf() {
+  if (hasShelf) { showView('shelf'); refreshShelf(); }
+  else showView('fileTools');
+}
+$('backToBooks').onclick = returnToShelf;
+$('filesBack').onclick = () => hasShelf ? returnToShelf() : showView('reader');
 window.addEventListener('reader-books',returnToShelf);
 window.addEventListener('reader-refresh',()=>{if(!shelfBusy)refreshShelf(true);else shelfMode().catch(report);});
 init().catch(report);
