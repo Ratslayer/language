@@ -40,6 +40,12 @@
   <section id="reader" aria-labelledby="title" hidden>
     <button id="backToBooks">‹ Books</button>
     <h1 id="title"></h1>
+    <form id="pageJump" hidden>
+      <label for="pageNumber">Page</label>
+      <input id="pageNumber" type="number" inputmode="numeric" enterkeyhint="go" min="1" step="1" required autocomplete="off">
+      <span id="pageTotal"></span>
+      <button type="submit">Go</button>
+    </form>
     <p id="progress" role="status" hidden></p>
     <p id="status" role="status"></p>
     <article id="passage" dir="auto" aria-label="Reading text"></article>

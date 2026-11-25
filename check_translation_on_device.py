@@ -93,5 +93,35 @@ tap('Language Reader')
 tap('soledad')
 tap('Muchos')
 check_screen('many','mucho')
+def js(expression):
+    return json.loads(subprocess.check_output(['node','check_webview.cjs',expression]))
+def wait_value(expression, expected):
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        if js(expression)==expected: return
+        time.sleep(.3)
+    raise AssertionError((expression,expected,js(expression)))
+
+tap('Muchos')
+wait_value('document.getElementById("popup").hidden',True)
+tap('Muchos')
+check_screen('many','mucho')
 tap('Translate sentence')
 check_screen('firing squad')
+
+js('document.getElementById("pageNumber").scrollIntoView(); document.getElementById("pageNumber").focus(); document.getElementById("pageNumber").select(); true')
+adb('shell','input','text','12')
+adb('shell','input','keyevent','KEYCODE_ENTER')
+wait_value('document.getElementById("count").textContent','12 / 634')
+adb('shell','input','swipe','150','460','150','250','350')
+time.sleep(1.2)
+position=js('window.scrollY')
+assert position>20,('No book scroll',position)
+adb('shell','am','force-stop',PACKAGE)
+adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity')
+tap('Language Reader')
+tap('soledad')
+wait_value('document.getElementById("pageNumber").value','12')
+restored=js('window.scrollY')
+assert abs(restored-position)<=2,(restored,position)
+print('Android second tap, jump to page 12, process restart and restored scroll passed:',restored,flush=True)

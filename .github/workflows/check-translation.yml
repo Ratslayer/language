@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           repository: Ratslayer/ai-pages
-          ref: 9c203c227dbed6a4e6b4dc6f70804c586f41d2e1
+          ref: d77207cae0902a32d57c3a42085c5e3677f5d07d
           path: host
           persist-credentials: false
       - uses: actions/setup-java@v5
