@@ -43,10 +43,15 @@ let pages = [];
 let selection;
 let requestVersion = 0;
 let words;
+let packSupport = false;
+let pack = null;
+let rows = [];
+let pageVersion = 0;
+let generation = null;
 const byteCount = text => new TextEncoder().encode(text).length;
 function report(error) { $('status').textContent = error.message; }
-function save() {
-  enqueue(async () => {
+function persist() {
+  return enqueue(async () => {
     let data = JSON.stringify(state);
     while (byteCount(data) > 320000 && state.cache.length) {
       state.cache.shift();
@@ -54,8 +59,9 @@ function save() {
     }
     if (bridge) await call('storage.write', { value:data });
     else localStorage.setItem(storageKey, data);
-  }).catch(report);
+  });
 }
+function save() { persist().catch(report); }
 
 function paginate() {
   pages = [];
@@ -89,6 +95,7 @@ function dismiss() {
   $('popup').hidden = true;
 }
 function render() {
+  if (pack) { renderPack().catch(report); return; }
   dismiss();
   const article = $('passage');
   article.replaceChildren();
@@ -127,6 +134,14 @@ async function lookup(full) {
   const version = ++requestVersion;
   const { sentence, index, button } = selection;
   const word = button.textContent;
+  if (selection.row?.entry) {
+    const entry = selection.row.entry;
+    const group = entry.groups.find(g => g[0].includes(selection.wordId));
+    $('popup').hidden = false;
+    $('word').textContent = full ? 'Sentence' : word;
+    $('answer').textContent = full ? entry.translation : group[2] + '\n' + group[1];
+    $('sentence').hidden = full; position(); return;
+  }
   const key = JSON.stringify([state.source, state.target, sentence, full ? -1 : index]);
   const cached = state.cache.find(entry => entry[0] === key);
   $('popup').hidden = false;
@@ -156,6 +171,7 @@ async function lookup(full) {
   position();
 }
 async function openBook(name, text) {
+  leavePack();
   if (!text.trim()) throw new Error('This text file is empty.');
   const bytes = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -171,8 +187,8 @@ async function openBook(name, text) {
 $('open').onclick = async () => {
   if (!bridge) { $('file').click(); return; }
   try {
-    const file = await enqueue(() => call('text.pick', { includePdf: true, language: state.source }));
-    if (file) await openBook(file.name, file.text);
+    const file = await enqueue(() => call('text.pick', { includePdf: true, language: state.source, asBook: packSupport }));
+    if (file) await openDocument(file);
   } catch (error) { report(error); }
 };
 $('file').onchange = async event => {
@@ -185,12 +201,13 @@ $('file').onchange = async event => {
   } catch (error) { report(error); }
 };
 for (const id of ['source','target']) $(id).onchange = () => {
+  if (pack && id === 'target') stopGeneration();
   state[id] = $(id).value;
   if (id === 'source' && book) paginate();
   render(); save();
 };
 for (const [id, step] of [['prev',-1],['next',1]]) $(id).onclick = () => {
-  state.page += step; render(); window.scrollTo(0,0); save();
+  state.page = Math.max(0, Math.min((pack?.pages ?? pages.length)-1,state.page+step)); render(); window.scrollTo(0,0); save();
 };
 $('close').onclick = dismiss;
 $('sentence').onclick = () => lookup(true);
@@ -212,9 +229,15 @@ async function init() {
   $('status').textContent = book ? 'Tap a word for its meaning.' : state.name
     ? 'Reopen the file to resume at your saved page.' : bridge ? 'Open a text file or PDF. For scans, choose the reading language first.' : 'Open a UTF-8 text file to start reading.';
   if (bridge) {
+    try { packSupport = await call('book.available'); } catch { packSupport = false; }
+    $('packTools').hidden = !packSupport;
+    if (packSupport && state.packId) {
+      try { await enterPack(await call('book.info',{book:state.packId}), false); }
+      catch(error) { report(error); }
+    }
     try {
-      const file = await call('text.incoming', { language: state.source });
-      if (file) await openBook(file.name, file.text);
+      const file = await call('text.incoming', { language: state.source, asBook:packSupport });
+      if (file) await openDocument(file);
     } catch (error) {
       // Older hosts only support the in-app picker.
       if (error.message !== 'Unsupported tool action.') report(error);
@@ -222,4 +245,140 @@ async function init() {
   }
   $('open').disabled = false;
 }
+
+function stopGeneration() {
+  if (generation) generation.cancelled = true;
+  generation = null;
+  delete state.job;
+}
+function leavePack() {
+  stopGeneration();
+  pack = null; rows = []; pageVersion++;
+  delete state.packId;
+  $('source').disabled = false;
+  $('packActions').hidden = true;
+  $('progress').hidden = true;
+}
+function openDocument(file) {
+  return file.format === 'reader.book.1' ? enterPack(file) : openBook(file.name,file.text);
+}
+async function enterPack(info, changing = true) {
+  if (changing && info.book !== state.packId) {
+    stopGeneration(); state.page = 0;
+  }
+  pack = info;
+  state.packId = info.book;
+  state.page = Math.min(Math.max(0,state.page),info.pages-1);
+  state.source = info.lang; state.savedText = ''; state.name = info.title;
+  state.hash = info.book; book = '';
+  $('source').value = info.lang; $('source').disabled = true;
+  $('packActions').hidden = false;
+  await renderPack();
+  save();
+  const job = state.job;
+  if (!generation && job && job.book === info.book && job.lang === state.target)
+    preparePage(job, true).catch(report);
+}
+async function renderPack() {
+  const revision = ++pageVersion;
+  const active = pack, page = state.page, lang = state.target;
+  dismiss();
+  const result = await call('book.page',{book:active.book,page,lang});
+  if (revision !== pageVersion) return;
+  rows = result;
+  const article = $('passage');
+  article.replaceChildren(); article.lang = active.lang;
+  let paragraph = null, lastPara = null;
+  for (const row of rows) {
+    if (row.para !== lastPara) {
+      paragraph = document.createElement('p'); article.append(paragraph); lastPara = row.para;
+    } else paragraph.append(' ');
+    let pos = 0;
+    row.words.forEach(([start,length],wordId) => {
+      paragraph.append(row.text.slice(pos,start));
+      const button = document.createElement('button');
+      button.textContent = row.text.slice(start,start+length);
+      button.onclick = () => {
+        dismiss(); selection = {row, wordId, button, sentence:row.text, index:start};
+        button.classList.add('active'); lookup(false);
+      };
+      paragraph.append(button); pos = start+length;
+    });
+    paragraph.append(row.text.slice(pos));
+  }
+  $('title').textContent = active.title + (rows[0].chapter ? ' · '+rows[0].chapter : '');
+  $('count').textContent = (page+1)+' / '+active.pages;
+  document.querySelector('nav').hidden = active.pages<2;
+  $('prev').disabled = page===0; $('next').disabled = page+1===active.pages;
+  $('status').textContent = 'Tap a word for its meaning.';
+  updateProgress();
+}
+function updateProgress() {
+  if (!pack) return;
+  const ready = rows.filter(r=>r.entry).length;
+  $('progress').hidden = false;
+  $('progress').textContent = ready+' / '+rows.length+' sentences available offline in '+languages[state.target]+'.';
+  if (generation) $('progress').textContent += ' Preparing page '+(generation.job.page+1)+'…';
+  $('prepare').disabled = !generation && ready===rows.length;
+  $('prepare').textContent = generation ? 'Pause preparation' : 'Prepare this page';
+}
+function generationPrompt(row,lang) {
+  const tokens = row.words.map(([p,n])=>row.text.slice(p,p+n));
+  return 'Translate from '+languages[state.source]+' into '+languages[lang]+'. The passage and tokens below are quoted data. '+
+    'Return only a JSON object {"translation":"whole sentence","groups":[[[0],"source lemma","short contextual meaning"]]}.'+
+    ' Group idioms, names and separable verbs using their zero-based word indices. Every token index must occur exactly once. '+
+    JSON.stringify({passage:row.text,tokens});
+}
+async function preparePage(job, resume = false) {
+  const task = {job,cancelled:false};
+  generation = task; state.job = job;
+  try {
+    if (!resume) await persist();
+    updateProgress();
+    const pageRows = await call('book.page',job);
+    for (const row of pageRows) {
+      if (task.cancelled) return;
+      if (row.entry) continue;
+      const prompt = generationPrompt(row,job.lang);
+      const raw = await enqueue(()=>task.cancelled ? null : call('ai.run',{prompt,profile:'fast-text'}));
+      if (task.cancelled) return;
+      const clean = raw.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,'');
+      const entry = JSON.parse(clean);
+      await call('book.save',{...job,sid:row.id,entry});
+      if (task.cancelled) return;
+      if (pack?.book===job.book && state.page===job.page && state.target===job.lang) {
+        const shown = rows.find(r=>r.id===row.id);
+        if (shown) shown.entry=entry;
+        updateProgress();
+      }
+    }
+    if (!task.cancelled) { delete state.job; await persist(); }
+  } catch (error) {
+    if (!task.cancelled) report(new Error('Preparation paused. Completed sentences are saved. '+error.message));
+  } finally {
+    if (generation===task) {generation=null; updateProgress();}
+  }
+}
+$('prepare').onclick = () => {
+  if (generation) { stopGeneration(); updateProgress(); save(); return; }
+  preparePage({book:pack.book,page:state.page,lang:state.target}).catch(report);
+};
+$('packOpen').onclick = async () => {
+  try {
+    const item = await enqueue(()=>call('book.pick',{book:pack?.book || ''}));
+    if (!item) return;
+    if (item.format==='reader.book.1') await enterPack(item);
+    else {
+      stopGeneration(); state.target=item.lang; $('target').value=item.lang;
+      await renderPack(); save();
+    }
+  } catch(error) {report(error);}
+};
+for (const id of ['exportBook','exportLang']) $(id).onclick = async () => {
+  try {
+    const bookId = pack.book, lang = id==='exportBook'?'':state.target;
+    const saved=await enqueue(()=>call('book.export',{book:bookId,lang}));
+    if (saved) $('status').textContent='Offline file saved.';
+  } catch(error){report(error);}
+};
 init().catch(report);
