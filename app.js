@@ -50,7 +50,8 @@ let pageVersion = 0;
 let generation = null;
 let hasShelf = false;
 let shelfBusy = false;
-let connectedCatalogue = false;
+const catalogueFileId = '1_f_zhiRS4UjK8lzw5aXr80Iv2G7RpVTd';
+let catalogueReady = false;
 const byteCount = text => new TextEncoder().encode(text).length;
 function report(error) { $('status').textContent = error.message; }
 function persist() {
@@ -251,7 +252,10 @@ async function init() {
         const library = await call('book.shelf');
         hasShelf = true;
         $('backToBooks').hidden = false;
-        if (!incoming) { showShelf(); drawShelf(library); }
+        if (!incoming) {
+          showShelf(); drawShelf(library);
+          if (!catalogueReady) await refreshShelf();
+        }
         else await shelfMode();
       } catch (error) { if (error.message !== 'Unsupported book action.' && error.message !== 'Unsupported tool action.') report(error); }
     }
@@ -419,7 +423,7 @@ function shelfMessage(message) {
   $('shelfStatus').hidden=!message;
 }
 function drawShelf(library) {
-  connectedCatalogue=library.connected;
+  catalogueReady=library.connected && state.catalogueSource===catalogueFileId;
   const grid=$('bookGrid');
   grid.replaceChildren();
   for (const book of library.books) {
@@ -435,24 +439,26 @@ function drawShelf(library) {
     card.onclick=()=>selectBook(book);
     grid.append(card);
   }
-  $('refreshBooks').hidden=!library.connected;
-  $('connectSettings').open=!library.connected;
-  if (library.books.length===0) shelfMessage(library.connected?'No books in this catalogue yet.':'Connect your Google Drive catalogue or open a local book.');
+  if (library.books.length===0 && catalogueReady) shelfMessage('No books in this catalogue yet.');
 }
 function setShelfBusy(busy) {
   shelfBusy=busy;
   $('shelf').setAttribute('aria-busy',String(busy));
   for(const element of $('shelf').querySelectorAll('button')) element.disabled=busy;
 }
-async function refreshShelf(refresh=false,source) {
+async function refreshShelf(refresh=false) {
   if(shelfBusy || $('shelf').hidden) return;
   setShelfBusy(true);shelfMessage('');
   try {
-    await shelfMode(refresh || !!source);
-    const library=await call('book.shelf',{refresh,...(source ? {source} : {})});
+    const fetchFromDrive=refresh || !catalogueReady;
+    await shelfMode(fetchFromDrive);
+    const library=await call('book.shelf',fetchFromDrive ? {source:catalogueFileId} : {});
+    if(fetchFromDrive && library.connected && state.catalogueSource!==catalogueFileId) {
+      state.catalogueSource=catalogueFileId;
+      save();
+    }
     drawShelf(library);
-    if(source) $('driveLink').value='';
-  } catch(error){shelfMessage(error.message);}
+  } catch(error){shelfMessage('Could not load the book catalogue. '+error.message+' Tap Refresh to retry.');}
   finally{setShelfBusy(false);await shelfMode().catch(report);}
 }
 async function selectBook(item) {
@@ -468,23 +474,10 @@ async function selectBook(item) {
   } catch(error){shelfMessage(error.message);}
   finally{setShelfBusy(false);}
 }
-function driveCatalogueId(input) {
-  const url=new URL(input);
-  if(url.protocol!=='https:' || url.hostname!=='drive.google.com')throw new Error('Use the Google Drive file link for catalogue.json.');
-  const match=url.pathname.match(/^\/file\/d\/([A-Za-z0-9_-]+)(?:\/|$)/);
-  const id=match?.[1] || (url.pathname==='/open' && url.searchParams.get('id'));
-  if(!id || !/^[A-Za-z0-9_-]{10,160}$/.test(id))throw new Error('Choose the link to catalogue.json inside the folder.');
-  return id;
-}
-$('connectBooks').onclick=()=>{
-  try {refreshShelf(false,driveCatalogueId($('driveLink').value.trim()));}
-  catch(error){shelfMessage(error.message);}
-};
-$('driveLink').onkeydown=e=>{if(e.key==='Enter')$('connectBooks').click();};
 $('refreshBooks').onclick=()=>refreshShelf(true);
 $('importBook').onclick=()=>{showReading();};
 function returnToShelf() {if(hasShelf){showShelf();refreshShelf();}}
 $('backToBooks').onclick=returnToShelf;
 window.addEventListener('reader-books',returnToShelf);
-window.addEventListener('reader-refresh',()=>{if(!shelfBusy)refreshShelf(connectedCatalogue);else shelfMode().catch(report);});
+window.addEventListener('reader-refresh',()=>{if(!shelfBusy)refreshShelf(true);else shelfMode().catch(report);});
 init().catch(report);
