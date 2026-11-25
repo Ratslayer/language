@@ -27,7 +27,9 @@ jobs:
           gradle-version: '8.13'
       - name: Build AI Pages
         working-directory: host
-        run: gradle assembleDebug
+        run: |
+          sed -i '/WebView view = screen.view;/a\        WebView.setWebContentsDebuggingEnabled(true);' app/src/main/java/app/aipages/MainActivity.java
+          gradle assembleDebug
       - name: Prepare emulator and screenshot OCR
         run: |
           sudo chmod 666 /dev/kvm

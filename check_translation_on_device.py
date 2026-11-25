@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+import csv
+import io
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -28,6 +30,24 @@ def prefs(name, **fields):
         ET.SubElement(root, 'string', name=key).text = val
     put('shared_prefs/'+name+'.xml', ET.tostring(root, encoding='utf-8', xml_declaration=True))
 
+def screen_text(tsv=False):
+    shot=adb('exec-out','screencap','-p')
+    args=['tesseract','stdin','stdout','-l','eng','--psm','6']
+    if tsv: args.append('tsv')
+    return subprocess.run(args,input=shot,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,check=True).stdout.decode()
+
+def tap_text(label):
+    rows=[r for r in csv.DictReader(io.StringIO(screen_text(True)), delimiter='\t') if r['text'].strip()]
+    tokens=label.casefold().split()
+    for i in range(len(rows)-len(tokens)+1):
+        run=rows[i:i+len(tokens)]
+        if [r['text'].casefold().strip('.,:') for r in run] == tokens:
+            r=run[0]
+            adb('shell','input','tap',str(int(r['left'])+int(r['width'])//2),str(int(r['top'])+int(r['height'])//2))
+            print('Tapped displayed text:',label,flush=True)
+            return True
+    return False
+
 def tap(label):
     deadline = time.monotonic()+60
     labels = []
@@ -43,7 +63,11 @@ def tap(label):
                 if x2>x1 and y2>y1:
                     adb('shell','input','tap',str((x1+x2)//2),str((y1+y2)//2))
                     return
+        if tap_text(label): return
         time.sleep(.5)
+    print('Screen OCR:', screen_text(), flush=True)
+    print(adb('logcat','-d','-t','650','chromium:I','AndroidRuntime:W','*:S').decode(errors='replace')[-5000:])
+    subprocess.run(['node','check_webview.cjs'])
     raise AssertionError((label, [s for s in labels if s]))
 
 def check_screen(*terms):
@@ -56,6 +80,7 @@ def check_screen(*terms):
             print('Device screenshot shows:', ', '.join(terms),flush=True)
             return
         if time.monotonic()>=deadline:
+            subprocess.run(['node','check_webview.cjs'])
             raise AssertionError(text)
         time.sleep(1)
 
@@ -89,6 +114,7 @@ for suffix,fmt,lang in [('book','reader.book.1','es'),('en','reader.translation.
 adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity')
 tap('Language Reader')
 tap('Translation check')
+print('In book:',screen_text(),flush=True)
 tap('Muchos')
 check_screen('many','mucho')
 tap('Translate sentence')
