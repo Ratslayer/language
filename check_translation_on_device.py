@@ -44,26 +44,11 @@ def tap_text(label):
     return False
 
 def tap(label):
-    deadline = time.monotonic()+60
-    labels = []
+    deadline=time.monotonic()+65
     while time.monotonic()<deadline:
-        adb('shell','uiautomator','dump','/data/local/tmp/reader-window.xml')
-        root = ET.fromstring(adb('exec-out','cat','/data/local/tmp/reader-window.xml'))
-        labels = []
-        for node in root.iter('node'):
-            name = node.get('text') or node.get('content-desc') or ''
-            labels.append(name)
-            if label.casefold() in name.casefold():
-                x1,y1,x2,y2 = map(int,re.findall(r'\d+', node.get('bounds')))
-                if x2>x1 and y2>y1:
-                    adb('shell','input','tap',str((x1+x2)//2),str((y1+y2)//2))
-                    return
-        if tap_text(label): return
-        time.sleep(.5)
-    print('Missing tap target:', label, flush=True)
-    print(adb('logcat','-d','-t','650','chromium:I','AndroidRuntime:W','*:S').decode(errors='replace')[-5000:])
-    subprocess.run(['node','check_webview.cjs'])
-    raise AssertionError(label)
+        if tap_text(label):return
+        time.sleep(.6)
+    raise AssertionError('Visible target missing: '+label)
 
 def check_screen(*terms):
     deadline = time.monotonic()+20
@@ -108,16 +93,16 @@ def tap_selector(selector):
     js(f'document.querySelector({sel}).scrollIntoView({{block:"center"}}); true')
     target=js(f'(()=>{{const e=document.querySelector({sel}),r=e.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+r.height/2;return {{x,y,width:innerWidth,hit:e.contains(document.elementFromPoint(x,y))}};}})()')
     assert target['hit'],(selector,target)
-    adb('shell','uiautomator','dump','/data/local/tmp/reader-window.xml')
-    ax=ET.fromstring(adb('exec-out','cat','/data/local/tmp/reader-window.xml'))
-    bounds=[list(map(int,re.findall(r'\d+',n.get('bounds')))) for n in ax.iter('node') if n.get('class')=='android.webkit.WebView']
-    if bounds:
-        x0,y0,x2,y2=max(bounds,key=lambda r:(r[2]-r[0])*(r[3]-r[1]))
-    else:
-        root_box=list(map(int,re.findall(r'\d+',ax.find('node').get('bounds'))))
-        tools=next(n for n in ax.iter('node') if n.get('text','').lower()=='tools')
-        x0,_,x2,y2=root_box
-        y0=list(map(int,re.findall(r'\d+',tools.get('bounds'))))[3]
+    for attempt in range(6):
+        try:
+            adb('shell','uiautomator','dump','/data/local/tmp/reader-window.xml')
+            ax=ET.fromstring(adb('exec-out','cat','/data/local/tmp/reader-window.xml'))
+            bounds=[list(map(int,re.findall(r'\d+',n.get('bounds')))) for n in ax.iter('node') if n.get('class')=='android.webkit.WebView']
+            x0,y0,x2,y2=max(bounds,key=lambda r:(r[2]-r[0])*(r[3]-r[1]))
+            break
+        except (subprocess.CalledProcessError,ValueError,ET.ParseError):
+            if attempt==5:raise
+            time.sleep(1)
     scale=(x2-x0)/target['width']
     adb('shell','input','tap',str(round(x0+scale*target['x'])),str(round(y0+scale*target['y'])))
     print('Tapped Android screen at',selector,flush=True)
