@@ -15,6 +15,14 @@
     <label>Reading in <select id="source"></select></label>
     <label>Translate to <select id="target"></select></label>
   </section>
+  <div id="packTools" hidden><button id="packOpen">Open book or language file</button>
+    <details id="packActions" hidden><summary>Offline files</summary>
+      <button id="prepare">Prepare this page</button>
+      <button id="exportLang">Save language file…</button>
+      <button id="exportBook">Save book file…</button>
+    </details>
+  </div>
+  <p id="progress" role="status" hidden></p>
   <p id="status" role="status"></p>
   <h2 id="title"></h2>
   <article id="passage" dir="auto" aria-label="Reading text"></article>

@@ -22,3 +22,8 @@ aside { position: fixed; z-index: 1; width: min(19rem,calc(100vw - 16px)); max-h
 #word, #answer { overflow-wrap: anywhere; white-space: pre-line; }
 #sentence { margin-top: .7rem; font-size: .85rem; }
 [hidden] { display: none !important; }
+#packTools { display:flex; flex-wrap:wrap; align-items:baseline; gap:.75rem; margin-top:.8rem; }
+#packActions summary { cursor:pointer; }
+#packActions button { margin:.4rem .25rem 0 0; font-size:.9rem; }
+#progress { margin-bottom:0; color:#435d42; }
+#passage p { margin:.7em 0; }
