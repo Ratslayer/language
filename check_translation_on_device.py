@@ -102,9 +102,29 @@ def wait_value(expression, expected):
         time.sleep(.3)
     raise AssertionError((expression,expected,js(expression)))
 
-tap('Muchos')
+def tap_selector(selector):
+    # Two labels can contain the same word. Use the passage button's rectangle for a physical tap.
+    sel=json.dumps(selector)
+    js(f'document.querySelector({sel}).scrollIntoView({{block:"center"}}); true')
+    target=js(f'(()=>{{const e=document.querySelector({sel}),r=e.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+r.height/2;return {{x,y,width:innerWidth,hit:e.contains(document.elementFromPoint(x,y))}};}})()')
+    assert target['hit'],(selector,target)
+    adb('shell','uiautomator','dump','/data/local/tmp/reader-window.xml')
+    ax=ET.fromstring(adb('exec-out','cat','/data/local/tmp/reader-window.xml'))
+    bounds=[list(map(int,re.findall(r'\d+',n.get('bounds')))) for n in ax.iter('node') if n.get('class')=='android.webkit.WebView']
+    if bounds:
+        x0,y0,x2,y2=max(bounds,key=lambda r:(r[2]-r[0])*(r[3]-r[1]))
+    else:
+        root_box=list(map(int,re.findall(r'\d+',ax.find('node').get('bounds'))))
+        tools=next(n for n in ax.iter('node') if n.get('text','').lower()=='tools')
+        x0,_,x2,y2=root_box
+        y0=list(map(int,re.findall(r'\d+',tools.get('bounds'))))[3]
+    scale=(x2-x0)/target['width']
+    adb('shell','input','tap',str(round(x0+scale*target['x'])),str(round(y0+scale*target['y'])))
+    print('Tapped Android screen at',selector,flush=True)
+
+tap_selector('.passageWord.active')
 wait_value('document.getElementById("popup").hidden',True)
-tap('Muchos')
+tap_selector('.passageWord')
 check_screen('many','mucho')
 tap('Translate sentence')
 check_screen('firing squad')
