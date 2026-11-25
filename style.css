@@ -39,9 +39,5 @@ aside { position: fixed; z-index: 1; width: min(19rem,calc(100vw - 16px)); max-h
 .bookAuthor { font-size:.85rem; margin:.6rem 0 1.5rem; }
 .bookPages { margin-top:auto; border-top:1px solid #ffffff66; padding-top:.6rem; font-size:.8rem; font-variant-numeric:tabular-nums; }
 .shelfControls { display:flex; flex-wrap:wrap; gap:.7rem; align-items:baseline; }
-.shelfControls button, .shelfControls summary { font-size:.88rem; }
-.shelfControls details { flex-basis:100%; }
-.shelfControls summary { cursor:pointer; }
-.shelfControls label { display:block; margin:.75rem 0 .25rem; }
-.shelfControls input { font:inherit; max-width:100%; width:18rem; padding:.45rem; }
+.shelfControls button { font-size:.88rem; }
 #backToBooks { margin-bottom:.5rem; }
