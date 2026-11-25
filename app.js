@@ -171,7 +171,7 @@ async function openBook(name, text) {
 $('open').onclick = async () => {
   if (!bridge) { $('file').click(); return; }
   try {
-    const file = await enqueue(() => call('text.pick'));
+    const file = await enqueue(() => call('text.pick', { includePdf: true }));
     if (file) await openBook(file.name, file.text);
   } catch (error) { report(error); }
 };
@@ -202,6 +202,7 @@ window.addEventListener('resize', position);
 window.addEventListener('scroll', position, {passive:true});
 async function init() {
   const raw = bridge ? await call('storage.read') : localStorage.getItem(storageKey);
+  if (bridge) $('open').textContent = 'Open TXT or PDF';
   if (raw) Object.assign(state, JSON.parse(raw));
   $('source').value = state.source;
   $('target').value = state.target;
@@ -209,7 +210,7 @@ async function init() {
   if (book) paginate();
   render();
   $('status').textContent = book ? 'Tap a word for its meaning.' : state.name
-    ? 'Reopen the file to resume at your saved page.' : 'Open a UTF-8 text file to start reading.';
+    ? 'Reopen the file to resume at your saved page.' : bridge ? 'Open a text file or a PDF with selectable text.' : 'Open a UTF-8 text file to start reading.';
   $('open').disabled = false;
 }
 init().catch(report);
