@@ -171,7 +171,7 @@ async function openBook(name, text) {
 $('open').onclick = async () => {
   if (!bridge) { $('file').click(); return; }
   try {
-    const file = await enqueue(() => call('text.pick', { includePdf: true }));
+    const file = await enqueue(() => call('text.pick', { includePdf: true, language: state.source }));
     if (file) await openBook(file.name, file.text);
   } catch (error) { report(error); }
 };
@@ -210,7 +210,16 @@ async function init() {
   if (book) paginate();
   render();
   $('status').textContent = book ? 'Tap a word for its meaning.' : state.name
-    ? 'Reopen the file to resume at your saved page.' : bridge ? 'Open a text file or a PDF with selectable text.' : 'Open a UTF-8 text file to start reading.';
+    ? 'Reopen the file to resume at your saved page.' : bridge ? 'Open a text file or PDF. For scans, choose the reading language first.' : 'Open a UTF-8 text file to start reading.';
+  if (bridge) {
+    try {
+      const file = await call('text.incoming', { language: state.source });
+      if (file) await openBook(file.name, file.text);
+    } catch (error) {
+      // Older hosts only support the in-app picker.
+      if (error.message !== 'Unsupported tool action.') report(error);
+    }
+  }
   $('open').disabled = false;
 }
 init().catch(report);
