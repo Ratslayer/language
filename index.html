@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Language Reader</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+<main>
+  <header><h1>Language Reader</h1><button id="open" disabled>Open .txt file</button></header>
+  <input id="file" type="file" accept=".txt,text/plain" hidden>
+  <section class="languages" aria-label="Languages">
+    <label>Reading in <select id="source"></select></label>
+    <label>Translate to <select id="target"></select></label>
+  </section>
+  <p id="status" role="status"></p>
+  <h2 id="title"></h2>
+  <article id="passage" dir="auto" aria-label="Reading text"></article>
+  <nav hidden><button id="prev">Previous</button><span id="count"></span><button id="next">Next</button></nav>
+</main>
+<aside id="popup" hidden aria-label="Translation">
+  <button id="close" aria-label="Close translation">×</button>
+  <strong id="word"></strong><div id="answer" role="status" dir="auto"></div>
+  <button id="sentence">Translate sentence</button>
+</aside>
+</body></html>
