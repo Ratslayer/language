@@ -1,6 +1,7 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
+const popup = $('popup');
 const bridge = window.AiPages;
 const pending = new Map();
 let nextId = 0;
@@ -99,7 +100,8 @@ function dismiss() {
   selection?.button.classList.remove('active');
   selection = null;
   requestVersion++;
-  $('popup').hidden = true;
+  popup.hidden = true;
+  if (popup.parentNode !== $('reader')) $('reader').append(popup);
 }
 function render() {
   if (pack) { renderPack().catch(report); return; }
@@ -110,15 +112,7 @@ function render() {
   for (const sentence of pages[state.page] || []) {
     for (const part of words.segment(sentence)) {
       if (!part.isWordLike) { article.append(part.segment); continue; }
-      const button = document.createElement('button');
-      button.textContent = part.segment;
-      button.onclick = () => {
-        dismiss();
-        selection = { button, sentence, index:part.index };
-        button.classList.add('active');
-        lookup(false);
-      };
-      article.append(button);
+      article.append(wordButton(part.segment, { sentence, index:part.index }));
     }
   }
   $('title').textContent = state.name;
@@ -127,26 +121,43 @@ function render() {
   $('prev').disabled = !state.page;
   $('next').disabled = state.page + 1 >= pages.length;
 }
+function wordButton(text, context) {
+  const button = document.createElement('button');
+  button.className = 'passageWord';
+  button.textContent = text;
+  button.onclick = () => {
+    dismiss();
+    selection = { ...context, button };
+    button.classList.add('active');
+    button.after(popup);
+    popup.hidden = false;
+    lookup(false);
+    popup.scrollIntoView({ block:'nearest', inline:'nearest' });
+  };
+  return button;
+}
+function preparedAnswer({ row, wordId }, full) {
+  const entry = row?.entry;
+  if (full) return typeof entry?.translation === 'string' ? entry.translation.trim() : '';
+  if (!Array.isArray(entry?.groups)) return '';
+  const group = entry.groups.find(g => Array.isArray(g?.[0]) && g[0].includes(wordId));
+  if (typeof group?.[2] !== 'string' || !group[2].trim()) return '';
+  return [group[2], group[1]].filter(v => typeof v === 'string' && v.trim()).join('\n');
+}
 async function lookup(full) {
   const version = ++requestVersion;
   const { sentence, index, button } = selection;
   const word = button.textContent;
-  const popup = $('popup');
-  if (!full) popup.classList.toggle('atTop', button.getBoundingClientRect().top > document.documentElement.clientHeight / 2);
-  popup.hidden = false;
   $('word').textContent = full ? 'Sentence' : word;
+  $('word').lang = full ? 'en' : state.source;
   $('sentence').hidden = full;
-  $('answer').scrollTop = 0;
-  if (selection.row?.entry) {
-    const entry = selection.row.entry;
-    const group = entry.groups.find(g => g[0].includes(selection.wordId));
-    $('answer').textContent = full ? entry.translation : group[2] + '\n' + group[1];
-    return;
-  }
+  const answer = $('answer');
+  answer.lang = state.target;
   const key = JSON.stringify([state.source, state.target, sentence, full ? -1 : index]);
-  const cached = state.cache.find(entry => entry[0] === key);
-  $('answer').textContent = cached ? cached[1] : 'Translating…';
-  if (cached) return;
+  const cached = state.cache.find(entry => entry[0] === key)?.[1];
+  const ready = preparedAnswer(selection, full) || (typeof cached === 'string' && cached.trim());
+  answer.textContent = ready || 'Translating…';
+  if (ready) return;
   const instruction = full ? 'Translate the passage. Return only the translation.'
     : 'Give the meaning of the selected word in this passage, accounting for idioms and separable verbs. Return two short lines: contextual translation, then source-language dictionary form.';
   const prompt = instruction + ' Source: ' + languages[state.source] + '. Target: ' + languages[state.target]
@@ -154,16 +165,15 @@ async function lookup(full) {
     : {before:sentence.slice(0,index), selected:word, after:sentence.slice(index + word.length)});
   try {
     const result = await enqueue(() => version === requestVersion ? call('ai.run', {prompt, profile:'fast-text'}) : null);
-    if (result === null) return;
-    if (typeof result !== 'string' || !result.trim()) throw new Error('Empty translation. Tap the word to retry.');
     if (version !== requestVersion) return;
+    if (typeof result !== 'string' || !result.trim()) throw new Error('Empty translation. Tap the word to retry.');
     state.cache.push([key,result.trim()]);
     if (state.cache.length > 200) state.cache.shift();
     save();
-    $('answer').textContent = result.trim();
+    answer.textContent = result.trim();
   } catch (error) {
     if (version !== requestVersion) return;
-    $('answer').textContent = error.message;
+    answer.textContent = error.message || 'Translation failed. Tap the word to retry.';
   }
 }
 async function openBook(name, text) {
@@ -206,12 +216,18 @@ for (const id of ['source','target']) $(id).onchange = () => {
 for (const [id, step] of [['prev',-1],['next',1]]) $(id).onclick = () => {
   state.page = Math.max(0, Math.min((pack?.pages ?? pages.length)-1,state.page+step)); render(); window.scrollTo(0,0); save();
 };
-$('close').onclick = dismiss;
+function closeTranslation() {
+  const button = selection?.button;
+  dismiss();
+  button?.focus({ preventScroll:true });
+  button?.scrollIntoView({ block:'nearest' });
+}
+$('close').onclick = closeTranslation;
 $('sentence').onclick = () => lookup(true);
-document.addEventListener('pointerdown', e => {
-  if (!e.target.closest('#popup, #passage button')) dismiss();
+document.addEventListener('click', e => {
+  if (selection && !e.target.closest('#popup, .passageWord')) dismiss();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') dismiss(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && selection) closeTranslation(); });
 async function init() {
   const raw = bridge ? await call('storage.read') : localStorage.getItem(storageKey);
   if (bridge) $('open').textContent = 'Open TXT or PDF';
@@ -303,6 +319,7 @@ async function renderPack() {
   dismiss();
   const result = await call('book.page',{book:active.book,page,lang});
   if (revision !== pageVersion) return;
+  dismiss();
   rows = result;
   const article = $('passage');
   article.replaceChildren(); article.lang = active.lang;
@@ -314,13 +331,8 @@ async function renderPack() {
     let pos = 0;
     row.words.forEach(([start,length],wordId) => {
       paragraph.append(row.text.slice(pos,start));
-      const button = document.createElement('button');
-      button.textContent = row.text.slice(start,start+length);
-      button.onclick = () => {
-        dismiss(); selection = {row, wordId, button, sentence:row.text, index:start};
-        button.classList.add('active'); lookup(false);
-      };
-      paragraph.append(button); pos = start+length;
+      paragraph.append(wordButton(row.text.slice(start,start+length), { row, wordId, sentence:row.text, index:start }));
+      pos = start+length;
     });
     paragraph.append(row.text.slice(pos));
   }
