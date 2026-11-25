@@ -48,6 +48,9 @@ let pack = null;
 let rows = [];
 let pageVersion = 0;
 let generation = null;
+let hasShelf = false;
+let shelfBusy = false;
+let connectedCatalogue = false;
 const byteCount = text => new TextEncoder().encode(text).length;
 function report(error) { $('status').textContent = error.message; }
 function persist() {
@@ -235,12 +238,22 @@ async function init() {
       try { await enterPack(await call('book.info',{book:state.packId}), false); }
       catch(error) { report(error); }
     }
+    let incoming = false;
     try {
       const file = await call('text.incoming', { language: state.source, asBook:packSupport });
-      if (file) await openDocument(file);
+      if (file) {await openDocument(file); incoming = true;}
     } catch (error) {
       // Older hosts only support the in-app picker.
       if (error.message !== 'Unsupported tool action.') report(error);
+    }
+    if (packSupport) {
+      try {
+        const library = await call('book.shelf');
+        hasShelf = true;
+        $('backToBooks').hidden = false;
+        if (!incoming) { showShelf(); drawShelf(library); }
+        else await shelfMode();
+      } catch (error) { if (error.message !== 'Unsupported book action.' && error.message !== 'Unsupported tool action.') report(error); }
     }
   }
   $('open').disabled = false;
@@ -264,7 +277,11 @@ function openDocument(file) {
 }
 async function enterPack(info, changing = true) {
   if (changing && info.book !== state.packId) {
-    stopGeneration(); state.page = 0;
+    if (state.packId) {
+      state.bookmarks ||= {};
+      state.bookmarks[state.packId] = state.page;
+    }
+    stopGeneration(); state.page = state.bookmarks?.[info.book] || 0;
   }
   pack = info;
   state.packId = info.book;
@@ -352,7 +369,10 @@ async function preparePage(job, resume = false) {
         updateProgress();
       }
     }
-    if (!task.cancelled) { delete state.job; await persist(); }
+    if (!task.cancelled) {
+      delete state.job; await persist();
+      if (hasShelf && !$('shelf').hidden) await refreshShelf();
+    }
   } catch (error) {
     if (!task.cancelled) report(new Error('Preparation paused. Completed sentences are saved. '+error.message));
   } finally {
@@ -381,4 +401,90 @@ for (const id of ['exportBook','exportLang']) $(id).onclick = async () => {
     if (saved) $('status').textContent='Offline file saved.';
   } catch(error){report(error);}
 };
+
+function shelfMode(refreshing=false) {
+  if (!hasShelf) return Promise.resolve();
+  return call('book.shelfMode',{visible:!$('shelf').hidden,refreshing});
+}
+function showShelf() {
+  dismiss(); $('reader').hidden=true; $('shelf').hidden=false;
+  window.scrollTo(0,0); shelfMode().catch(report);
+}
+function showReading() {
+  $('shelf').hidden=true; $('reader').hidden=false;
+  window.scrollTo(0,0); shelfMode().catch(report);
+}
+function shelfMessage(message) {
+  $('shelfStatus').textContent=message || '';
+  $('shelfStatus').hidden=!message;
+}
+function drawShelf(library) {
+  connectedCatalogue=library.connected;
+  const grid=$('bookGrid');
+  grid.replaceChildren();
+  for (const book of library.books) {
+    const card=document.createElement('button');
+    card.className='bookCard';
+    const title=document.createElement('strong'); title.textContent=book.title;
+    card.append(title);
+    if (book.author) {
+      const author=document.createElement('span'); author.className='bookAuthor'; author.textContent=book.author; card.append(author);
+    }
+    const count=document.createElement('span'); count.className='bookPages';
+    count.textContent=book.ready+' / '+book.pages+' pages translated'; card.append(count);
+    card.onclick=()=>selectBook(book);
+    grid.append(card);
+  }
+  $('refreshBooks').hidden=!library.connected;
+  $('connectSettings').open=!library.connected;
+  if (library.books.length===0) shelfMessage(library.connected?'No books in this catalogue yet.':'Connect your Google Drive catalogue or open a local book.');
+}
+function setShelfBusy(busy) {
+  shelfBusy=busy;
+  $('shelf').setAttribute('aria-busy',String(busy));
+  for(const element of $('shelf').querySelectorAll('button')) element.disabled=busy;
+}
+async function refreshShelf(refresh=false,source) {
+  if(shelfBusy || $('shelf').hidden) return;
+  setShelfBusy(true);shelfMessage('');
+  try {
+    await shelfMode(refresh || !!source);
+    const library=await call('book.shelf',{refresh,...(source ? {source} : {})});
+    drawShelf(library);
+    if(source) $('driveLink').value='';
+  } catch(error){shelfMessage(error.message);}
+  finally{setShelfBusy(false);await shelfMode().catch(report);}
+}
+async function selectBook(item) {
+  if(shelfBusy)return;
+  setShelfBusy(true);shelfMessage(item.local?'Opening book…':'Checking for book updates…');
+  try {
+    const info=item.local?await call('book.info',{book:item.local}):await call('book.download',{slug:item.id});
+    if(state.target!=='en')stopGeneration();
+    state.target='en';$('target').value='en';
+    await enterPack(info);
+    showReading();
+    if(info.notice) $('status').textContent=info.notice;
+  } catch(error){shelfMessage(error.message);}
+  finally{setShelfBusy(false);}
+}
+function driveCatalogueId(input) {
+  const url=new URL(input);
+  if(url.protocol!=='https:' || url.hostname!=='drive.google.com')throw new Error('Use the Google Drive file link for catalogue.json.');
+  const match=url.pathname.match(/^\/file\/d\/([A-Za-z0-9_-]+)(?:\/|$)/);
+  const id=match?.[1] || (url.pathname==='/open' && url.searchParams.get('id'));
+  if(!id || !/^[A-Za-z0-9_-]{10,160}$/.test(id))throw new Error('Choose the link to catalogue.json inside the folder.');
+  return id;
+}
+$('connectBooks').onclick=()=>{
+  try {refreshShelf(false,driveCatalogueId($('driveLink').value.trim()));}
+  catch(error){shelfMessage(error.message);}
+};
+$('driveLink').onkeydown=e=>{if(e.key==='Enter')$('connectBooks').click();};
+$('refreshBooks').onclick=()=>refreshShelf(true);
+$('importBook').onclick=()=>{showReading();};
+function returnToShelf() {if(hasShelf){showShelf();refreshShelf();}}
+$('backToBooks').onclick=returnToShelf;
+window.addEventListener('reader-books',returnToShelf);
+window.addEventListener('reader-refresh',()=>{if(!shelfBusy)refreshShelf(connectedCatalogue);else shelfMode().catch(report);});
 init().catch(report);

@@ -27,3 +27,21 @@ aside { position: fixed; z-index: 1; width: min(19rem,calc(100vw - 16px)); max-h
 #packActions button { margin:.4rem .25rem 0 0; font-size:.9rem; }
 #progress { margin-bottom:0; color:#435d42; }
 #passage p { margin:.7em 0; }
+.shelfHeading { align-items:flex-end; padding-bottom:1rem; border-bottom:1px solid #b8c1b4; }
+.shelfHeading h1 { margin:0; font-size:2.35rem; }
+.shelfLanguage { display:grid; font-size:.76rem; color:#4b5d4d; }
+.shelfLanguage strong { color:#20372a; font-size:1rem; }
+#bookGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,9rem),1fr)); gap:1rem; margin:1.4rem 0; }
+.bookCard { position:relative; display:flex; flex-direction:column; align-items:stretch; text-align:start; min-height:13rem; color:#f8f6e8; background:#285346; border:0; border-inline-start:.4rem solid #193c32; border-radius:.2rem .45rem .45rem .2rem; padding:1.2rem 1rem .85rem; box-shadow:1px 3px 6px #15291d25; }
+.bookCard:nth-child(3n+2) { background:#563e52; border-inline-start-color:#342630; }
+.bookCard:nth-child(3n) { background:#37495b; border-inline-start-color:#283849; }
+.bookCard strong { font:1.55rem/1.15 Georgia,serif; overflow-wrap:anywhere; }
+.bookAuthor { font-size:.85rem; margin:.6rem 0 1.5rem; }
+.bookPages { margin-top:auto; border-top:1px solid #ffffff66; padding-top:.6rem; font-size:.8rem; font-variant-numeric:tabular-nums; }
+.shelfControls { display:flex; flex-wrap:wrap; gap:.7rem; align-items:baseline; }
+.shelfControls button, .shelfControls summary { font-size:.88rem; }
+.shelfControls details { flex-basis:100%; }
+.shelfControls summary { cursor:pointer; }
+.shelfControls label { display:block; margin:.75rem 0 .25rem; }
+.shelfControls input { font:inherit; max-width:100%; width:18rem; padding:.45rem; }
+#backToBooks { margin-bottom:.5rem; }

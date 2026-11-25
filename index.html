@@ -9,6 +9,24 @@
 </head>
 <body>
 <main>
+  <section id="shelf" aria-labelledby="shelfTitle" hidden>
+    <header class="shelfHeading"><h1 id="shelfTitle">Books</h1>
+      <span class="shelfLanguage">Translation language <strong lang="en">English</strong></span>
+    </header>
+    <p id="shelfStatus" role="status" hidden></p>
+    <div id="bookGrid" aria-label="Book catalogue"></div>
+    <div class="shelfControls">
+      <button id="refreshBooks">Refresh</button>
+      <button id="importBook">Open local file…</button>
+      <details id="connectSettings"><summary>Drive catalogue</summary>
+        <label for="driveLink">Google Drive link to catalogue.json</label>
+        <input id="driveLink" type="url" inputmode="url" autocomplete="off" placeholder="Paste file link">
+        <button id="connectBooks">Connect</button>
+      </details>
+    </div>
+  </section>
+  <div id="reader">
+  <button id="backToBooks" hidden>‹ Books</button>
   <header><h1>Language Reader</h1><button id="open" disabled>Open .txt file</button></header>
   <input id="file" type="file" accept=".txt,text/plain" hidden>
   <section class="languages" aria-label="Languages">
@@ -27,6 +45,7 @@
   <h2 id="title"></h2>
   <article id="passage" dir="auto" aria-label="Reading text"></article>
   <nav hidden><button id="prev">Previous</button><span id="count"></span><button id="next">Next</button></nav>
+  </div>
 </main>
 <aside id="popup" hidden aria-label="Translation">
   <button id="close" aria-label="Close translation">×</button>
