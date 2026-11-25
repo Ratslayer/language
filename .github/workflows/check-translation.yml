@@ -1,0 +1,40 @@
+name: Verify translation on Android
+on:
+  push:
+    branches: [verify/translation-on-android]
+permissions:
+  contents: read
+jobs:
+  phone:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: Ratslayer/ai-pages
+          ref: 9c203c227dbed6a4e6b4dc6f70804c586f41d2e1
+          path: host
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Build AI Pages
+        working-directory: host
+        run: gradle assembleDebug
+      - name: Prepare emulator and screenshot OCR
+        run: |
+          sudo chmod 666 /dev/kvm
+          if ! command -v tesseract; then sudo apt-get update && sudo apt-get install -y tesseract-ocr; fi
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          disable-animations: true
+          script: python3 check_translation_on_device.py
