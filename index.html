@@ -9,19 +9,19 @@
 </head>
 <body>
 <main>
-  <section id="shelf" aria-labelledby="shelfTitle" hidden>
+  <section id="shelf" aria-labelledby="shelfTitle">
     <header class="shelfHeading"><h1 id="shelfTitle">Books</h1>
-      <label class="shelfLanguage">Translation language <select id="shelfTarget"></select></label>
+      <label class="shelfLanguage">Translation language <select id="shelfTarget" disabled><option value="en">English</option></select></label>
     </header>
-    <p id="shelfStatus" role="status" hidden></p>
+    <p id="shelfStatus" role="status">Loading books…</p>
     <div id="bookGrid" aria-label="Book catalogue"></div>
     <div class="shelfControls">
-      <button id="refreshBooks">Refresh</button>
-      <button id="importBook">Open local file…</button>
+      <button id="refreshBooks" disabled>Refresh</button>
+      <button id="importBook" disabled>Open local file…</button>
     </div>
   </section>
-  <section id="fileTools" aria-label="Local files">
-    <button id="filesBack" hidden>‹ Books</button>
+  <section id="fileTools" aria-label="Local files" hidden>
+    <button id="filesBack">‹ Books</button>
     <header><h1>Local files</h1><button id="open" disabled>Open .txt file</button></header>
     <input id="file" type="file" accept=".txt,text/plain" hidden>
     <section class="languages" aria-label="Languages">

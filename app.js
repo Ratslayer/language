@@ -84,7 +84,8 @@ const languages = { de:'German', en:'English', ru:'Russian', fr:'French', es:'Sp
   it:'Italian', pt:'Portuguese', nl:'Dutch', sv:'Swedish', pl:'Polish', uk:'Ukrainian',
   tr:'Turkish', ar:'Arabic', he:'Hebrew', hi:'Hindi', ja:'Japanese', zh:'Chinese', ko:'Korean' };
 for (const id of ['source', 'target', 'shelfTarget']) {
-  for (const [code, name] of Object.entries(languages)) $(id).add(new Option(code==='ru' ? 'Русский (Russian)' : name, code));
+  $(id).replaceChildren(...Object.entries(languages).map(([code,name])=>
+    new Option(code==='ru' ? 'Русский (Russian)' : name, code, false, code==='en')));
 }
 const storageKey = 'language-reader-v1';
 let state = { source:'de', target:'en', page:0, name:'', hash:'', savedText:'', cache:[], bookmarks:{} };
@@ -99,7 +100,7 @@ let rows = [];
 let pageVersion = 0;
 let generation = null;
 let hasShelf = false;
-let shelfBusy = false;
+let shelfBusy = true;
 const catalogueFileId = '1_f_zhiRS4UjK8lzw5aXr80Iv2G7RpVTd';
 let catalogueReady = false;
 const byteCount = text => new TextEncoder().encode(text).length;
@@ -341,7 +342,7 @@ function chooseTarget(lang) {
   if(state.target!==lang) stopGeneration();
   state.target=lang;
   $('target').value=lang;
-  $('shelfTarget').value=store ? lang : 'en';
+  $('shelfTarget').value=lang;
 }
 $('source').onchange=()=>{
   state.source=$('source').value;
@@ -406,14 +407,7 @@ async function init() {
   $('target').value = state.target;
   $('shelfTarget').value = state.target;
   book = state.savedText;
-  if (book) { state.page = bookmarkFor(state.hash).page; paginate(); }
-  render();
-  if (book) {
-    $('status').textContent = 'Tap a word for its meaning.';
-    showView('reader');
-  }
-  $('fileStatus').textContent = state.name && !book
-    ? 'Reopen the file to resume at your saved page.' : bridge ? 'Open a text file or PDF. For scans, choose the reading language first.' : 'Open a UTF-8 text file to start reading.';
+  let library,incoming;
   if (bridge) {
     let privateFiles=false;
     try {privateFiles=await call('files.available');}
@@ -424,37 +418,34 @@ async function init() {
       catalogue=new BookCatalogue(store,files,serialized);
       await catalogue.init();
       packSupport=true;
+      hasShelf=true;
+      library=catalogue.listedShelf(state.target);
     } else {
       try {packSupport=await call('book.available');} catch {packSupport=false;}
-    }
-    $('packTools').hidden = !packSupport;
-    if (packSupport && state.packId) {
-      try { await enterPack(await readerAction('info',{book:state.packId}), false); }
-      catch(error) { report(error); }
-    }
-    let incoming = false;
-    try {
-      const file = await pickDocument('text.incoming');
-      if (file) {await openDocument(file); incoming = true;}
-    } catch (error) {
-      // Older hosts only support the in-app picker.
-      if (error.message !== 'Unsupported tool action.') report(error);
-    }
-    if (packSupport) {
-      try {
-        const library = await readerAction('shelf');
-        hasShelf = true;
-        $('backToBooks').textContent = '‹ Books';
-        if (!incoming) {
-          showView('shelf'); drawShelf(library);
-          if (!catalogueReady) await refreshShelf();
+      if(packSupport) {
+        try {library=await readerAction('shelf'); hasShelf=true;}
+        catch(error) {
+          if(error.message!=='Unsupported book action.' && error.message!=='Unsupported tool action.') throw error;
         }
-        else await shelfMode();
-      } catch (error) { if (error.message !== 'Unsupported book action.' && error.message !== 'Unsupported tool action.') report(error); }
+      }
     }
+    $('packTools').hidden=!packSupport;
+    // A document explicitly opened from Android Files goes directly to the reader.
+    try {incoming=await pickDocument('text.incoming');}
+    catch(error) {if(error.message!=='Unsupported tool action.') report(error);}
   }
-  if (!hasShelf) $('backToBooks').textContent = '‹ Local files';
-  $('open').disabled = false;
+  $('open').disabled=false;
+  $('refreshBooks').hidden=!hasShelf;
+  setShelfBusy(false);
+  if(incoming) {await openDocument(incoming); return;}
+
+  drawShelf(library || {books:[],connected:false});
+  if(store || (hasShelf && !catalogueReady)) await refreshShelf();
+  else await shelfMode();
+
+  const job=state.job;
+  if(packSupport && !generation && job && job.book===state.packId && job.lang===state.target)
+    preparePage(job,true).catch(report);
 }
 
 function stopGeneration() {
@@ -473,10 +464,10 @@ function leavePack() {
 function openDocument(file) {
   return file.format === 'reader.book.1' ? enterPack(file) : openBook(file.name,file.text);
 }
-async function enterPack(info, changing = true) {
+async function loadPack(info) {
   stopTracking();
   const saved = bookmarkFor(info.book);
-  if (changing && info.book !== state.packId) stopGeneration();
+  if (info.book !== state.packId) stopGeneration();
   pack = info;
   state.packId = info.book;
   state.page = Math.min(Math.max(0, saved.page), info.pages - 1);
@@ -484,7 +475,10 @@ async function enterPack(info, changing = true) {
   state.hash = info.book; book = '';
   $('source').value = info.lang; $('source').disabled = true;
   $('packActions').hidden = false;
-  if (!await renderPack()) return;
+  return renderPack();
+}
+async function enterPack(info) {
+  if (!await loadPack(info)) return;
   if (info.notice) $('status').textContent = info.notice;
   showView('reader');
   save();
@@ -693,9 +687,8 @@ function showView(id) {
   dismiss();
   for (const view of ['shelf', 'fileTools', 'reader']) $(view).hidden = view !== id;
   if (id === 'fileTools') {
-    $('filesBack').hidden = !hasShelf && !pack && !book;
-    $('filesBack').textContent = hasShelf ? '‹ Books' : '‹ Return to book';
-    $('fileStatus').textContent = pack ? pack.title + ' · Page ' + (state.page + 1) : '';
+    $('fileStatus').textContent = pack ? pack.title + ' · Page ' + (state.page + 1) :
+      bridge ? 'For scans, choose the reading language before opening the file.' : 'Open a UTF-8 text file to start reading.';
   }
   if (id === 'reader') {
     const saved = bookmarkFor(state.hash);
@@ -708,12 +701,16 @@ function shelfMessage(message) {
   $('shelfStatus').hidden=!message;
 }
 function drawShelf(library) {
-  $('shelfTarget').value=store ? state.target : 'en';
-  $('shelfTarget').disabled=!store || shelfBusy;
+  $('shelfTarget').value=hasShelf && !store ? 'en' : state.target;
+  $('shelfTarget').disabled=(hasShelf && !store) || shelfBusy;
+  shelfMessage('');
   catalogueReady=library.connected && state.catalogueSource===catalogueFileId;
   const grid=$('bookGrid');
   grid.replaceChildren();
-  for (const book of library.books) {
+  const books=[...library.books];
+  if(book && !state.packId) books.push({text:true,title:state.name});
+  if(!hasShelf && packSupport && state.packId) books.push({local:state.packId,title:state.name});
+  for (const book of books) {
     const card=document.createElement('button');
     card.className='bookCard';
     const title=document.createElement('strong'); title.textContent=book.title;
@@ -721,29 +718,39 @@ function drawShelf(library) {
     if (book.author) {
       const author=document.createElement('span'); author.className='bookAuthor'; author.textContent=book.author; card.append(author);
     }
-    const count=document.createElement('span'); count.className='bookPages';
-    count.textContent=book.ready+' / '+book.pages+' pages translated'; card.append(count);
+    if(Number.isInteger(book.pages)) {
+      const count=document.createElement('span'); count.className='bookPages';
+      count.textContent=book.ready+' / '+book.pages+' pages translated'; card.append(count);
+    }
     card.onclick=()=>selectBook(book);
     grid.append(card);
   }
-  if (library.books.length===0 && catalogueReady) shelfMessage('No books in this catalogue yet.');
+  if (!books.length && (catalogueReady || !hasShelf)) shelfMessage('No books yet.');
 }
 function setShelfBusy(busy) {
   shelfBusy=busy;
-  $('shelfTarget').disabled=!store || busy;
+  $('shelfTarget').disabled=(hasShelf && !store) || busy;
   $('shelf').setAttribute('aria-busy',String(busy));
   for(const element of $('shelf').querySelectorAll('button')) element.disabled=busy;
 }
 let shelfRequest=0;
 async function refreshShelf(refresh=false) {
   if(shelfBusy || $('shelf').hidden) return;
+  if(!hasShelf) {drawShelf({books:[],connected:false}); return;}
   const request=++shelfRequest;
   if(!store) setShelfBusy(true);
-  shelfMessage('');
+  shelfMessage($('bookGrid').childElementCount ? '' : 'Loading books…');
   try {
     const fetchFromDrive=refresh || !catalogueReady;
     await shelfMode(fetchFromDrive);
-    if(store && fetchFromDrive) await catalogue.refresh(catalogueFileId);
+    if(store && fetchFromDrive) {
+      if(!catalogueReady) {
+        const cached=await readerAction('shelf');
+        if(request!==shelfRequest || $('shelf').hidden) return;
+        if(cached.books.length) drawShelf(cached);
+      }
+      await catalogue.refresh(catalogueFileId);
+    }
     if(request!==shelfRequest || $('shelf').hidden) return;
     const library=await readerAction('shelf',!store && fetchFromDrive ? {source:catalogueFileId} : {});
     if(request!==shelfRequest || $('shelf').hidden) return;
@@ -822,6 +829,7 @@ async function selectBook(item) {
   shelfRequest++;
   setShelfBusy(true);shelfMessage('Opening book…');
   try {
+    if(item.text) {await openBook(state.name,book); return;}
     const info=item.local?await readerAction('info',{book:item.local}):await readerAction('download',{slug:item.id});
     if(!store && !item.local) chooseTarget('en');
     if(store && item.id) rememberEdition(item.id,info.book);
@@ -834,13 +842,21 @@ async function selectBook(item) {
   finally{setShelfBusy(false);}
 }
 $('refreshBooks').onclick=()=>refreshShelf(true);
-$('importBook').onclick = () => showView('fileTools');
+$('importBook').onclick=async()=>{
+  shelfRequest++;
+  setShelfBusy(true);
+  try {
+    if(packSupport && !pack && state.packId) await loadPack(await readerAction('info',{book:state.packId}));
+    showView('fileTools');
+  } catch(error) {
+    showView('fileTools'); report(error);
+  } finally {setShelfBusy(false);}
+};
 function returnToShelf() {
-  if (hasShelf) { showView('shelf'); refreshShelf(); }
-  else showView('fileTools');
+  showView('shelf'); refreshShelf();
 }
 $('backToBooks').onclick = returnToShelf;
-$('filesBack').onclick = () => hasShelf ? returnToShelf() : showView('reader');
+$('filesBack').onclick = returnToShelf;
 function readerBack() {
   if($('imageViewer').open) $('imageViewer').close();
   else if($('chapterDialog').open) $('chapterDialog').close();
