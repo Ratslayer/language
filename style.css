@@ -47,7 +47,7 @@ nav { margin-top: 1.5rem; }
 .shelfHeading { align-items:flex-end; padding-bottom:1rem; border-bottom:1px solid #b8c1b4; }
 .shelfHeading h1 { margin:0; font-size:2.35rem; }
 .shelfLanguage { display:grid; font-size:.76rem; color:#4b5d4d; }
-.shelfLanguage strong { color:#20372a; font-size:1rem; }
+.shelfLanguage select { color:#20372a; font-size:1rem; }
 #bookGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,9rem),1fr)); gap:1rem; margin:1.4rem 0; }
 .bookCard { position:relative; display:flex; flex-direction:column; align-items:stretch; text-align:start; min-height:13rem; color:#f8f6e8; background:#285346; border:0; border-inline-start:.4rem solid #193c32; border-radius:.2rem .45rem .45rem .2rem; padding:1.2rem 1rem .85rem; box-shadow:1px 3px 6px #15291d25; }
 .bookCard:nth-child(3n+2) { background:#563e52; border-inline-start-color:#342630; }

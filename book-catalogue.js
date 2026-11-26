@@ -42,19 +42,19 @@ class BookCatalogue {
     await this.persist({...this.cache,source:fileId,books});
   }
   active(slug) {return 'active:'+this.cache.source+':'+slug;}
-  async shelf(source) {
+  async shelf(source,lang='en') {
     if(source) await this.refresh(source);
     const installed=(await this.files.list()).filter(name=>/^[a-f0-9]{64}\.book\.sqlite$/.test(name)).map(name=>name.slice(0,64));
     const listed=new Set(),books=[];
     for(const b of this.cache.books) {
       listed.add(b.bookId); listed.add(this.cache.checkpoints[this.active(b.id)]);
-      const ready=new Set(b.languages.en?.readyPages || []);
-      if(installed.includes(b.bookId)) for(const p of await this.store.readyPages(b.bookId,'en')) ready.add(p);
+      const ready=new Set(b.languages[lang]?.readyPages || []);
+      if(installed.includes(b.bookId)) for(const p of await this.store.readyPages(b.bookId,lang)) ready.add(p);
       books.push({id:b.id,title:b.title,author:b.author,pages:b.pages,ready:ready.size});
     }
     for(const id of installed) if(!listed.has(id)) {
       const {title,pages}=await this.store.describe(id);
-      books.push({local:id,title,pages,ready:(await this.store.readyPages(id,'en')).size});
+      books.push({local:id,title,pages,ready:(await this.store.readyPages(id,lang)).size});
     }
     return {connected:!!this.cache.source,books};
   }
@@ -67,7 +67,7 @@ class BookCatalogue {
     await this.store.importBytes(await this.files.download(asset,64*1024*1024),book,{book,lang});
     await this.checkpoint(key,asset.sha256);
   }
-  async open(slug) {
+  async open(slug,lang='en') {
     const previous=this.cache.books.find(b=>b.id===slug);
     requireData(previous,'Book is no longer listed.');
     const prior=this.cache.checkpoints[this.active(slug)] || previous.bookId;
@@ -80,7 +80,7 @@ class BookCatalogue {
     requireData(item,'Book is no longer listed.');
     try {
       await this.install(item.bookId,'',item.source);
-      if(item.languages.en) await this.install(item.bookId,'en',item.languages.en);
+      if(item.languages[lang]) await this.install(item.bookId,lang,item.languages[lang]);
       await this.checkpoint(this.active(slug),item.bookId);
       return await this.store.describe(item.bookId);
     } catch(error) {
