@@ -19,7 +19,17 @@ function validateCatalogue(data) {
   return data.books;
 }
 class BookCatalogue {
-  constructor(store,files) { this.store=store; this.files=files; this.path='catalogue.json'; }
+  constructor(store,files,local=work=>work()) {
+    this.store=store; this.files=files; this.local=local; this.path='catalogue.json';
+    this.pending=new Map();
+  }
+  once(key,work) {
+    if(!this.pending.has(key)) {
+      const task=Promise.resolve().then(work).finally(()=>this.pending.delete(key));
+      this.pending.set(key,task);
+    }
+    return this.pending.get(key);
+  }
   async init() {
     const decode=bytes=>JSON.parse(new TextDecoder().decode(bytes));
     if(await this.files.size(this.path)>=0) this.cache=decode(await this.files.read(this.path));
@@ -37,19 +47,24 @@ class BookCatalogue {
     this.cache=cache;
   }
   async refresh(fileId) {
-    const bytes=await this.files.download({fileId},1024*1024);
-    const books=validateCatalogue(JSON.parse(new TextDecoder().decode(bytes)));
-    await this.persist({...this.cache,source:fileId,books});
+    return this.once('manifest:'+fileId,async()=>{
+      const bytes=await this.files.download({fileId},1024*1024);
+      const books=validateCatalogue(JSON.parse(new TextDecoder().decode(bytes)));
+      await this.local(()=>this.persist({...this.cache,source:fileId,books}));
+    });
   }
   active(slug) {return 'active:'+this.cache.source+':'+slug;}
   async shelf(source,lang='en') {
     if(source) await this.refresh(source);
+    return this.local(()=>this.listShelf(lang));
+  }
+  async listShelf(lang) {
     const installed=(await this.files.list()).filter(name=>/^[a-f0-9]{64}\.book\.sqlite$/.test(name)).map(name=>name.slice(0,64));
     const listed=new Set(),books=[];
     for(const b of this.cache.books) {
       listed.add(b.bookId); listed.add(this.cache.checkpoints[this.active(b.id)]);
       const ready=new Set(b.languages[lang]?.readyPages || []);
-      if(installed.includes(b.bookId)) for(const p of await this.store.readyPages(b.bookId,lang)) ready.add(p);
+      if(ready.size<b.pages && installed.includes(b.bookId)) for(const p of await this.store.readyPages(b.bookId,lang)) ready.add(p);
       books.push({id:b.id,title:b.title,author:b.author,pages:b.pages,ready:ready.size});
     }
     for(const id of installed) if(!listed.has(id)) {
@@ -61,31 +76,72 @@ class BookCatalogue {
   async checkpoint(key,value) {
     await this.persist({...this.cache,checkpoints:{...this.cache.checkpoints,[key]:value}});
   }
-  async install(book,lang,asset) {
-    const key='installed:'+book+':'+(lang || 'source');
-    if(this.cache.checkpoints[key]===asset.sha256 && await this.files.size(filename(book,lang))>=0) return;
-    await this.store.importBytes(await this.files.download(asset,64*1024*1024),book,{book,lang});
-    await this.checkpoint(key,asset.sha256);
-  }
-  async open(slug,lang='en') {
-    const previous=this.cache.books.find(b=>b.id===slug);
-    requireData(previous,'Book is no longer listed.');
-    const prior=this.cache.checkpoints[this.active(slug)] || previous.bookId;
-    const installed=await this.files.size(filename(prior))>=0;
-    try {await this.refresh(this.cache.source);}
-    catch(error) {
-      if(installed) return {...await this.store.describe(prior),notice:'Catalogue unavailable. Opened the downloaded copy.'};
-    }
+  item(slug) {
     const item=this.cache.books.find(b=>b.id===slug);
     requireData(item,'Book is no longer listed.');
+    return item;
+  }
+  async install(item,lang) {
+    const book=item.bookId,asset=lang ? item.languages[lang] : item.source;
+    if(!asset) return false;
+    const key='installed:'+book+':'+(lang || 'source');
+    return this.once(key+':'+asset.sha256,async()=>{
+      if(this.cache.checkpoints[key]===asset.sha256 && await this.files.size(filename(book,lang))>=0) return false;
+      const bytes=await this.files.download(asset,64*1024*1024);
+      return this.local(async()=>{
+        const current=this.item(item.id);
+        requireData(current.bookId===book && (lang ? current.languages[lang] : current.source)?.sha256===asset.sha256,
+          'A newer catalogue revision is available.');
+        await this.store.importBytes(bytes,book,{book,lang});
+        await this.checkpoint(key,asset.sha256);
+        return true;
+      });
+    });
+  }
+  async activate(item) {
+    return this.local(async()=>{
+      requireData(this.item(item.id).bookId===item.bookId,'A newer book revision is available.');
+      const key=this.active(item.id);
+      if(this.cache.checkpoints[key]!==item.bookId) await this.checkpoint(key,item.bookId);
+      return this.store.describe(item.bookId);
+    });
+  }
+  snapshot(info,lang) {
+    const installed=this.cache.checkpoints;
+    return {...info,sourceHash:installed['installed:'+info.book+':source'],languageHash:installed['installed:'+info.book+':'+lang]};
+  }
+  async open(slug,lang='en') {
+    const item=this.item(slug);
+    const prior=this.cache.checkpoints[this.active(slug)] || item.bookId;
+    const cached=await this.local(async()=>{
+      if(this.store.openSource?.book!==prior && await this.files.size(filename(prior))<0) return null;
+      return this.snapshot(await this.store.describe(prior),lang);
+    });
+    if(cached) return cached;
     try {
-      await this.install(item.bookId,'',item.source);
-      if(item.languages[lang]) await this.install(item.bookId,lang,item.languages[lang]);
-      await this.checkpoint(this.active(slug),item.bookId);
-      return await this.store.describe(item.bookId);
+      await this.install(item,'');
+      return this.snapshot(await this.activate(item),lang);
     } catch(error) {
-      if(installed) return {...await this.store.describe(prior),notice:'Update incomplete. Opened the downloaded copy. '+error.message};
-      throw error;
+      // A first download may be using an old cached manifest.
+      await this.refresh(this.cache.source);
+      const latest=this.item(slug);
+      if(latest.source.sha256===item.source.sha256 && latest.source.fileId===item.source.fileId) throw error;
+      await this.install(latest,'');
+      return this.snapshot(await this.activate(latest),lang);
     }
+  }
+  async update(slug,lang,opened,onChange) {
+    await this.refresh(this.cache.source);
+    const item=this.item(slug);
+    const imported=await this.install(item,'');
+    const changed=imported || opened.book!==item.bookId || opened.sourceHash!==item.source.sha256;
+    if(changed || this.cache.checkpoints[this.active(slug)]!==item.bookId) {
+      const info=await this.activate(item);
+      if(changed) await onChange({source:info});
+    }
+    const translated=await this.install(item,lang);
+    if(translated || (item.languages[lang] && opened.languageHash!==item.languages[lang].sha256))
+      await onChange({translations:item.bookId});
+    return {book:item.bookId,sourceHash:item.source.sha256,languageHash:item.languages[lang]?.sha256};
   }
 }

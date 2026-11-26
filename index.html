@@ -65,4 +65,13 @@
     <nav hidden><button id="prev">Previous</button><span id="count"></span><button id="next">Next</button></nav>
   </section>
 </main>
+<dialog id="imageViewer" aria-label="Illustration viewer">
+  <canvas role="img"></canvas>
+  <div class="imageControls" role="group" aria-label="Image controls">
+    <button type="button" data-out aria-label="Zoom out">−</button>
+    <button type="button" data-fit>Fit</button>
+    <button type="button" data-in aria-label="Zoom in">+</button>
+    <button type="button" data-close autofocus aria-label="Close image">×</button>
+  </div>
+</dialog>
 </body></html>
