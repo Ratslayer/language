@@ -67,3 +67,5 @@ nav { margin-top: 1.5rem; }
 #chapterList { display:grid; gap:.25rem; padding:.5rem; }
 #chapterList button { text-align:start; border:0; }
 #chapterList [aria-current] { background:#d3e4ba; font-weight:bold; }
+
+#passage > canvas { display:block; max-width:100%; height:auto; margin:1em auto .25em; }

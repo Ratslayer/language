@@ -53,3 +53,22 @@ test('legacy catalogue and local translations reopen offline after moving the fi
   await restarted.init();
   assert.equal((await restarted.shelf()).books.length,1);
 });
+test('illustrations stay with their caption across import and reopen',async()=>{
+  const SQL=await init(),files=new MemoryFiles(),store=new ReaderStore(SQL,files);
+  const {book}=await store.fromText('Illustrated','en','First. Caption.');
+  const source=new SQL.Database(await files.read(filename(book)));
+  source.run('UPDATE sentences SET page=1 WHERE id=2');
+  source.run('CREATE TABLE illustrations(sid,position,width,height,mime,alt,data,PRIMARY KEY(sid,position))');
+  for(const pos of [1,0]) source.run('INSERT INTO illustrations VALUES(2,?,1,1,?,?,?)',
+    [pos,'image/webp','Panel '+pos,new Uint8Array([1,2,3])]);
+  await store.importBytes(source.export(),book,{book,lang:''});
+  const reopened=new ReaderStore(SQL,files);
+  assert.equal((await reopened.page(book,'ru',0,true))[0].illustrations,undefined);
+  assert.equal((await reopened.page(book,'ru',1))[0].illustrations,undefined);
+  const [caption]=await reopened.page(book,'ru',1,true);
+  assert.deepEqual(caption.illustrations.map(i=>i.alt),['Panel 0','Panel 1']);
+  assert.deepEqual(Array.from(caption.illustrations[0].data),[1,2,3]);
+  source.run('UPDATE illustrations SET sid=3');
+  await assert.rejects(store.importBytes(source.export(),book,{book,lang:''}),/Invalid book illustration/);
+  source.close();
+});

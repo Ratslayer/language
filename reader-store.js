@@ -22,6 +22,21 @@ function storedTable(db,name) {
   const [row]=queryRows(db,'SELECT type, sql FROM sqlite_master WHERE name=?',[name]);
   requireData(row?.type==='table' && /^CREATE TABLE\s/i.test(row.sql),'Invalid '+name+' table.');
 }
+function hasIllustrations(db) {
+  return queryRows(db,"SELECT 1 FROM sqlite_master WHERE name='illustrations' AND type='table'").length>0;
+}
+function validateIllustrations(db) {
+  storedTable(db,'illustrations');
+  eachRow(db,`SELECT i.sid, s.id AS anchor, i.position, i.width, i.height, i.mime, i.alt,
+    typeof(i.data) AS storage, length(i.data) AS bytes
+    FROM illustrations i LEFT JOIN sentences s ON s.id=i.sid`,[],r=>{
+    requireData(r.anchor!=null && Number.isSafeInteger(r.position) && r.position>=0
+      && Number.isInteger(r.width) && Number.isInteger(r.height) && r.width>0 && r.height>0
+      && r.width*r.height<=32_000_000 && ['image/jpeg','image/png','image/webp'].includes(r.mime)
+      && typeof r.alt==='string' && r.storage==='blob' && r.bytes>0 && r.bytes<=16*1024*1024,
+      'Invalid book illustration.');
+  });
+}
 function metadata(db) {
   storedTable(db,'meta');
   const result=queryRows(db,'SELECT format, book_id AS book, lang, title FROM meta LIMIT 2');
@@ -96,7 +111,7 @@ class ReaderStore {
     this.openTranslation?.db.close();
     this.openTranslation=null;
   }
-  async page(book,lang,page) {
+  async page(book,lang,page,withIllustrations=false) {
     const db=await this.source(book), translations=await this.translations(book,lang);
     const rows=queryRows(db,'SELECT id,para,chapter,pdf_start AS pdf,pdf_end AS pdfEnd,text,words FROM sentences WHERE page=? ORDER BY id',[page]);
     requireData(rows.length,'Page does not exist.');
@@ -106,6 +121,13 @@ class ReaderStore {
     for (const row of rows) {
       row.words=JSON.parse(row.words);
       row.entry=entries.get(row.id);
+    }
+    if(withIllustrations && hasIllustrations(db)) {
+      const byId=new Map(rows.map(row=>[row.id,row]));
+      eachRow(db,`SELECT sid,width,height,mime,alt,data FROM illustrations
+        WHERE sid BETWEEN ? AND ? ORDER BY sid,position`,[rows[0].id,rows.at(-1).id],r=>{
+        (byId.get(r.sid).illustrations ??= []).push(r);
+      });
     }
     return rows;
   }
@@ -175,6 +197,7 @@ class ReaderStore {
         lastId=r.id; previousPage=r.page;
       });
       requireData(lastId>0,'Empty book.');
+      if(hasIllustrations(db)) validateIllustrations(db);
       const path=filename(info.book);
       if(expected || await this.files.size(path)<0) {
         await this.files.write(path,bytes);

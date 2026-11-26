@@ -45,7 +45,7 @@ function readerAction(action,args={}) {
     const {book,lang,page}=args;
     switch(action) {
       case 'info': return store.describe(book);
-      case 'page': return store.page(book,lang,page);
+      case 'page': return store.page(book,lang,page,args.withIllustrations);
       case 'save': return store.save(book,lang,args.sid,args.entry);
       case 'shelf': return catalogue.shelf(args.source);
       case 'download': return catalogue.open(args.slug);
@@ -202,6 +202,22 @@ function dismiss() {
   requestVersion++;
   popup.hidden = true;
   if (popup.parentNode !== $('reader')) $('reader').append(popup);
+}
+function appendIllustrations(article, illustrations) {
+  for (const {width,height,mime,alt,data} of illustrations) {
+    const canvas=document.createElement('canvas');
+    canvas.width=width; canvas.height=height;
+    canvas.setAttribute('role','img');
+    canvas.setAttribute('aria-label',alt || 'Book illustration');
+    article.append(canvas);
+    createImageBitmap(new Blob([data],{type:mime})).then(bitmap=>{
+      try {
+        if(canvas.isConnected) canvas.getContext('2d').drawImage(bitmap,0,0,width,height);
+      } finally { bitmap.close(); }
+    }).catch(()=>{
+      if(canvas.isConnected) canvas.replaceWith(document.createTextNode('Could not display illustration. '+alt));
+    });
+  }
 }
 function render() {
   if (pack) { renderPack().catch(report); return; }
@@ -451,7 +467,7 @@ async function renderPack(page = state.page) {
   dismiss();
   let result;
   try {
-    result = await readerAction('page',{book:active.book,page,lang});
+    result = await readerAction('page',{book:active.book,page,lang,withIllustrations:true});
   } catch (error) {
     if (revision !== pageVersion) return false;
     $('pageNumber').value = state.page + 1;
@@ -466,7 +482,11 @@ async function renderPack(page = state.page) {
   article.replaceChildren(); article.lang = active.lang;
   let paragraph = null, lastPara = null;
   for (const row of rows) {
-    if (row.para !== lastPara) {
+    if (row.illustrations?.length) {
+      appendIllustrations(article,row.illustrations);
+      paragraph=null;
+    }
+    if (!paragraph || row.para !== lastPara) {
       paragraph = document.createElement('p'); article.append(paragraph); lastPara = row.para;
     } else paragraph.append(' ');
     const anchor=document.createElement('span');
