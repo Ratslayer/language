@@ -79,6 +79,10 @@ test('shelf counts and downloads use the selected language',async()=>{
   await files.write('catalogue.json',new TextEncoder().encode(JSON.stringify({source:'index',books:[item],checkpoints:{}})));
   const catalogue=new BookCatalogue(store,files);
   await catalogue.init();
+  // The first paint of a cached shelf does not depend on opening local databases.
+  const preview=catalogue.listedShelf('ru');
+  assert.deepEqual(preview,{connected:true,books:[{id:'painting',title:'Painting',author:undefined,pages:1,ready:1}]});
+  assert.equal(catalogue.listedShelf('en').books[0].ready,0);
   assert.equal((await catalogue.shelf(undefined,'ru')).books[0].ready,1);
   assert.equal((await catalogue.shelf(undefined,'en')).books[0].ready,0);
   const installs=[];

@@ -59,20 +59,27 @@ class BookCatalogue {
     if(source) await this.refresh(source);
     return this.local(()=>this.listShelf(lang));
   }
+  listedShelf(lang) {
+    return {connected:!!this.cache.source,books:this.cache.books.map(b=>({
+      id:b.id,title:b.title,author:b.author,pages:b.pages,ready:new Set(b.languages[lang]?.readyPages).size
+    }))};
+  }
   async listShelf(lang) {
     const installed=(await this.files.list()).filter(name=>/^[a-f0-9]{64}\.book\.sqlite$/.test(name)).map(name=>name.slice(0,64));
-    const listed=new Set(),slugs=new Set(),books=[];
-    for(const b of this.cache.books) {
+    const listed=new Set(),slugs=new Set(),shelf=this.listedShelf(lang);
+    for(const [i,b] of this.cache.books.entries()) {
       slugs.add(b.id); listed.add(b.bookId); listed.add(this.cache.checkpoints[this.active(b.id)]);
-      const ready=new Set(b.languages[lang]?.readyPages || []);
-      if(ready.size<b.pages && installed.includes(b.bookId)) for(const p of await this.store.readyPages(b.bookId,lang)) ready.add(p);
-      books.push({id:b.id,title:b.title,author:b.author,pages:b.pages,ready:ready.size});
+      if(shelf.books[i].ready<b.pages && installed.includes(b.bookId)) {
+        const ready=await this.store.readyPages(b.bookId,lang);
+        for(const page of b.languages[lang]?.readyPages || []) ready.add(page);
+        shelf.books[i].ready=ready.size;
+      }
     }
     for(const id of installed) if(!listed.has(id) && !slugs.has(this.cache.checkpoints[this.retired(id)])) {
       const {title,pages}=await this.store.describe(id);
-      books.push({local:id,title,pages,ready:(await this.store.readyPages(id,lang)).size});
+      shelf.books.push({local:id,title,pages,ready:(await this.store.readyPages(id,lang)).size});
     }
-    return {connected:!!this.cache.source,books};
+    return shelf;
   }
   async checkpoint(key,value) {
     await this.persist({...this.cache,checkpoints:{...this.cache.checkpoints,[key]:value}});
