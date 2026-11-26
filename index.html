@@ -39,7 +39,11 @@
   </section>
   <section id="reader" aria-labelledby="title" hidden>
     <button id="backToBooks">‹ Books</button>
-    <h1 id="title"></h1>
+    <div class="bookHeading"><h1 id="title"></h1><button id="chapters" aria-label="Choose chapter" aria-haspopup="dialog" hidden></button></div>
+    <dialog id="chapterDialog" aria-labelledby="chapterHeading">
+      <header><h2 id="chapterHeading">Chapters</h2><button id="chapterClose" aria-label="Close chapters">×</button></header>
+      <div id="chapterList"></div>
+    </dialog>
     <form id="pageJump" hidden>
       <label for="pageNumber">Page</label>
       <input id="pageNumber" type="number" inputmode="numeric" enterkeyhint="go" min="1" step="1" required autocomplete="off">
