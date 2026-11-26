@@ -130,6 +130,7 @@ test('cached pages remain readable during delayed refresh and translation downlo
   packGate.resolve();await assert.rejects(syncing,/offline/);
   const cached=await catalogue.open(item.id,'ru');
   assert.equal(cached.book,revised.book);
+  assert.deepEqual((await catalogue.shelf()).books.map(b=>b.id),['painting']);
   files.download=async({fileId})=>fileId===index ? encode(manifest) : newer.files.read(filename(revised.book,'ru'));
   const changes=[];
   await catalogue.update(item.id,'ru',cached,c=>changes.push(c));

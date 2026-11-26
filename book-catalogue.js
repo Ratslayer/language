@@ -54,20 +54,21 @@ class BookCatalogue {
     });
   }
   active(slug) {return 'active:'+this.cache.source+':'+slug;}
+  retired(book) {return 'retired:'+this.cache.source+':'+book;}
   async shelf(source,lang='en') {
     if(source) await this.refresh(source);
     return this.local(()=>this.listShelf(lang));
   }
   async listShelf(lang) {
     const installed=(await this.files.list()).filter(name=>/^[a-f0-9]{64}\.book\.sqlite$/.test(name)).map(name=>name.slice(0,64));
-    const listed=new Set(),books=[];
+    const listed=new Set(),slugs=new Set(),books=[];
     for(const b of this.cache.books) {
-      listed.add(b.bookId); listed.add(this.cache.checkpoints[this.active(b.id)]);
+      slugs.add(b.id); listed.add(b.bookId); listed.add(this.cache.checkpoints[this.active(b.id)]);
       const ready=new Set(b.languages[lang]?.readyPages || []);
       if(ready.size<b.pages && installed.includes(b.bookId)) for(const p of await this.store.readyPages(b.bookId,lang)) ready.add(p);
       books.push({id:b.id,title:b.title,author:b.author,pages:b.pages,ready:ready.size});
     }
-    for(const id of installed) if(!listed.has(id)) {
+    for(const id of installed) if(!listed.has(id) && !slugs.has(this.cache.checkpoints[this.retired(id)])) {
       const {title,pages}=await this.store.describe(id);
       books.push({local:id,title,pages,ready:(await this.store.readyPages(id,lang)).size});
     }
@@ -102,7 +103,12 @@ class BookCatalogue {
     return this.local(async()=>{
       requireData(this.item(item.id).bookId===item.bookId,'A newer book revision is available.');
       const key=this.active(item.id);
-      if(this.cache.checkpoints[key]!==item.bookId) await this.checkpoint(key,item.bookId);
+      const previous=this.cache.checkpoints[key];
+      if(previous!==item.bookId) {
+        const checkpoints={...this.cache.checkpoints,[key]:item.bookId};
+        if(previous) checkpoints[this.retired(previous)]=item.id;
+        await this.persist({...this.cache,checkpoints});
+      }
       return this.store.describe(item.bookId);
     });
   }
