@@ -55,7 +55,7 @@ function checkWords(text,words) {
     end=start+len;
   }
 }
-function checkTranslation(payload,count) {
+function checkTranslation(payload,count,individualWords=false) {
   requireData(typeof payload==='string' && payload.length<=180000,'Invalid translation record.');
   const entry=JSON.parse(payload);
   requireData(typeof entry?.translation==='string' && entry.translation.trim() && Array.isArray(entry.groups),'Missing translation.');
@@ -63,6 +63,7 @@ function checkTranslation(payload,count) {
   for (const [ids,lemma,meaning] of entry.groups) {
     requireData(Array.isArray(ids) && ids.length && typeof lemma==='string' && lemma.trim()
       && typeof meaning==='string' && meaning.trim(),'Incomplete word meaning.');
+    requireData(!individualWords || ids.length===1,'Give each word its own translation.');
     for (const id of ids) {
       requireData(Number.isInteger(id) && id>=0 && id<count && !seen.has(id),'Invalid translation word index.');
       seen.add(id);
@@ -171,7 +172,7 @@ class ReaderStore {
     const [row]=queryRows(source,'SELECT words FROM sentences WHERE id=?',[sid]);
     requireData(row,'Unknown sentence.');
     const payload=JSON.stringify(entry);
-    checkTranslation(payload,JSON.parse(row.words).length);
+    checkTranslation(payload,JSON.parse(row.words).length,true);
     await this.writeTranslations(book,lang,db=>db.run('INSERT OR IGNORE INTO entries VALUES(?,?)',[sid,payload]));
   }
   async importBytes(bytes,current,expected) {

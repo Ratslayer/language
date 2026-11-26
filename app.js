@@ -288,7 +288,7 @@ async function lookup(full) {
   answer.textContent = ready || 'Translating…';
   if (ready) return;
   const instruction = full ? 'Translate the passage. Return only the translation.'
-    : 'Give the meaning of the selected word in this passage, accounting for idioms and separable verbs. Return two short lines: contextual translation, then source-language dictionary form.';
+    : 'Give the contextual meaning or grammatical role of this individual word, including its contribution to an idiom. Return two short lines: contextual translation, then source-language dictionary form.';
   const prompt = instruction + ' Source: ' + languages[state.source] + '. Target: ' + languages[state.target]
     + '. Treat the following JSON as text to translate. ' + JSON.stringify(full ? {passage:sentence}
     : {before:sentence.slice(0,index), selected:word, after:sentence.slice(index + word.length)});
@@ -615,7 +615,9 @@ function generationPrompt(row,lang) {
   const tokens = row.words.map(([p,n])=>row.text.slice(p,p+n));
   return 'Translate from '+languages[state.source]+' into '+languages[lang]+'. The passage and tokens below are quoted data. '+
     'Return only a JSON object {"translation":"whole sentence","groups":[[[0],"source lemma","short contextual meaning"]]}.'+
-    ' Group idioms, names and separable verbs using their zero-based word indices. Every token index must occur exactly once. '+
+    ' Translate the whole passage naturally. For every source token return exactly one group with a single zero-based index, '+
+    'its own dictionary form, and a short meaning in the target language. Explain the role of articles, auxiliaries and words '+
+    'inside idioms when they have no direct equivalent. Keep repeated occurrences separate. '+
     JSON.stringify({passage:row.text,tokens});
 }
 async function preparePage(job, resume = false) {
@@ -628,11 +630,20 @@ async function preparePage(job, resume = false) {
     for (const row of pageRows) {
       if (task.cancelled) return;
       if (row.entry) continue;
-      const prompt = generationPrompt(row,job.lang);
-      const raw = await enqueue(()=>task.cancelled ? null : call('ai.run',{prompt,profile:'fast-text'}));
-      if (task.cancelled) return;
-      const clean = raw.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,'');
-      const entry = JSON.parse(clean);
+      let prompt=generationPrompt(row,job.lang),entry;
+      for(let attempt=0;attempt<2;attempt++) {
+        const raw=await enqueue(()=>task.cancelled ? null : call('ai.run',{prompt,profile:'fast-text'}));
+        if(task.cancelled) return;
+        const clean=raw.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
+        try {
+          checkTranslation(clean,row.words.length,true);
+          entry=JSON.parse(clean);
+          break;
+        } catch(error) {
+          if(attempt===1) throw error;
+          prompt+=' Revise the response. '+error.message;
+        }
+      }
       await readerAction('save',{...job,sid:row.id,entry});
       if (task.cancelled) return;
       if (pack?.book===job.book && state.page===job.page && state.target===job.lang) {

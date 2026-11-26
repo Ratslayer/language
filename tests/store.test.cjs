@@ -142,3 +142,17 @@ test('cached pages remain readable during delayed refresh and translation downlo
   assert.equal(store.cachedPage(revised.book,'ru',0)[0].entry.translation,'три');
   await catalogue.update(item.id,'ru',await catalogue.open(item.id,'ru'),()=>assert.fail('unchanged book redrew'));
 });
+test('new translations require one meaning per word and legacy packs still import',async()=>{
+  const SQL=await init(),files=new MemoryFiles(),store=new ReaderStore(SQL,files);
+  const {book}=await store.fromText('Test','en','Brush up.');
+  const phrase={translation:'Освежить.',groups:[[[0,1],'brush up','освежить']]};
+  const words={translation:phrase.translation,groups:[[[0],'brush','освежать'],[[1],'up','частица фразового глагола']]};
+  await assert.rejects(store.save(book,'ru',1,phrase),/each word/);
+  await store.save(book,'ru',1,words);
+  assert.deepEqual((await store.page(book,'ru',0))[0].entry,words);
+  const legacy=new SQL.Database(await files.read(filename(book,'ru')));
+  legacy.run('UPDATE entries SET payload=? WHERE sid=1',[JSON.stringify(phrase)]);
+  await store.importBytes(legacy.export(),book,{book,lang:'ru'});
+  assert.deepEqual((await store.page(book,'ru',0))[0].entry,phrase);
+  legacy.close();
+});
