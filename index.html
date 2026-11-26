@@ -11,7 +11,7 @@
 <main>
   <section id="shelf" aria-labelledby="shelfTitle" hidden>
     <header class="shelfHeading"><h1 id="shelfTitle">Books</h1>
-      <span class="shelfLanguage">Translation language <strong lang="en">English</strong></span>
+      <label class="shelfLanguage">Translation language <select id="shelfTarget"></select></label>
     </header>
     <p id="shelfStatus" role="status" hidden></p>
     <div id="bookGrid" aria-label="Book catalogue"></div>
@@ -51,6 +51,7 @@
       <button type="submit">Go</button>
     </form>
     <p id="progress" role="status" hidden></p>
+    <button id="readingVersion" type="button" hidden></button>
     <p id="status" role="status"></p>
     <article id="passage" dir="auto" aria-label="Reading text"></article>
     <span id="popup" role="region" lang="en" dir="ltr" aria-label="Translation" hidden>

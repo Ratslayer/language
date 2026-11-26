@@ -72,3 +72,18 @@ test('illustrations stay with their caption across import and reopen',async()=>{
   await assert.rejects(store.importBytes(source.export(),book,{book,lang:''}),/Invalid book illustration/);
   source.close();
 });
+test('shelf counts and downloads use the selected language',async()=>{
+  const SQL=await init(),files=new MemoryFiles(),store=new ReaderStore(SQL,files);
+  const {book}=await store.fromText('Painting','en','Paint.');
+  const item={id:'painting',bookId:book,title:'Painting',pages:1,source:{},languages:{ru:{readyPages:[0]},en:{readyPages:[]}}};
+  await files.write('catalogue.json',new TextEncoder().encode(JSON.stringify({source:'index',books:[item],checkpoints:{}})));
+  const catalogue=new BookCatalogue(store,files);
+  await catalogue.init();
+  assert.equal((await catalogue.shelf(undefined,'ru')).books[0].ready,1);
+  assert.equal((await catalogue.shelf(undefined,'en')).books[0].ready,0);
+  const installs=[];
+  catalogue.refresh=async()=>{};
+  catalogue.install=async(id,lang)=>{assert.equal(id,book);installs.push(lang);};
+  await catalogue.open('painting','ru');
+  assert.deepEqual(installs,['','ru']);
+});

@@ -47,8 +47,8 @@ function readerAction(action,args={}) {
       case 'info': return store.describe(book);
       case 'page': return store.page(book,lang,page,args.withIllustrations);
       case 'save': return store.save(book,lang,args.sid,args.entry);
-      case 'shelf': return catalogue.shelf(args.source);
-      case 'download': return catalogue.open(args.slug);
+      case 'shelf': return catalogue.shelf(args.source,state.target);
+      case 'download': return catalogue.open(args.slug,state.target);
       case 'pick': {
         const path=files.temporary();
         try {
@@ -79,8 +79,8 @@ async function pickDocument(action) {
 const languages = { de:'German', en:'English', ru:'Russian', fr:'French', es:'Spanish',
   it:'Italian', pt:'Portuguese', nl:'Dutch', sv:'Swedish', pl:'Polish', uk:'Ukrainian',
   tr:'Turkish', ar:'Arabic', he:'Hebrew', hi:'Hindi', ja:'Japanese', zh:'Chinese', ko:'Korean' };
-for (const id of ['source', 'target']) {
-  for (const [code, name] of Object.entries(languages)) $(id).add(new Option(name, code));
+for (const id of ['source', 'target', 'shelfTarget']) {
+  for (const [code, name] of Object.entries(languages)) $(id).add(new Option(code==='ru' ? 'Русский (Russian)' : name, code));
 }
 const storageKey = 'language-reader-v1';
 let state = { source:'de', target:'en', page:0, name:'', hash:'', savedText:'', cache:[], bookmarks:{} };
@@ -232,6 +232,7 @@ function render() {
     }
   }
   $('title').textContent = state.name;
+  $('readingVersion').hidden=true;
   $('chapters').hidden=true;
   updatePageControls(pages.length);
 }
@@ -325,11 +326,24 @@ $('file').onchange = async event => {
     await openBook(file.name, await file.text());
   } catch (error) { report(error); }
 };
-for (const id of ['source','target']) $(id).onchange = () => {
-  if (pack && id === 'target') stopGeneration();
-  state[id] = $(id).value;
-  if (id === 'source' && book) paginate();
+function chooseTarget(lang) {
+  if(state.target!==lang) stopGeneration();
+  state.target=lang;
+  $('target').value=lang;
+  $('shelfTarget').value=store ? lang : 'en';
+}
+$('source').onchange=()=>{
+  state.source=$('source').value;
+  if(book) paginate();
   render(); save();
+};
+$('target').onchange=()=>{
+  chooseTarget($('target').value);
+  render(); save();
+};
+$('shelfTarget').onchange=()=>{
+  chooseTarget($('shelfTarget').value);
+  save(); refreshShelf();
 };
 async function goToPage(page, chapterStart) {
   const total = pack?.pages ?? pages.length;
@@ -374,6 +388,7 @@ async function init() {
   state.bookmarks ||= {};
   $('source').value = state.source;
   $('target').value = state.target;
+  $('shelfTarget').value = state.target;
   book = state.savedText;
   if (book) { state.page = bookmarkFor(state.hash).page; paginate(); }
   render();
@@ -478,8 +493,22 @@ async function renderPack(page = state.page) {
   state.page = page;
   dismiss();
   rows = result;
+  drawPackPassage();
+  $('title').textContent=active.title;
+  $('chapters').hidden=active.chapters ? !active.chapters.length : !rows[0].chapter;
+  $('chapters').textContent=(rows[0].chapter || 'Chapters')+' ▾';
+  updatePageControls(active.pages);
+  updateProgress();
+  return true;
+}
+function drawPackPassage() {
   const article = $('passage');
-  article.replaceChildren(); article.lang = active.lang;
+  const canReadTranslation=rows.length>0 && rows.every(row=>row.entry?.translation);
+  const translated=canReadTranslation && state.translatedBook===pack.book && state.translatedLanguage===state.target;
+  $('readingVersion').hidden=!canReadTranslation;
+  $('readingVersion').setAttribute('aria-pressed',String(translated));
+  $('readingVersion').textContent=translated ? 'Read original' : 'Read in '+(languages[state.target] || state.target);
+  article.replaceChildren(); article.lang=translated ? state.target : pack.lang;
   let paragraph = null, lastPara = null;
   for (const row of rows) {
     if (row.illustrations?.length) {
@@ -492,6 +521,10 @@ async function renderPack(page = state.page) {
     const anchor=document.createElement('span');
     anchor.id='sentence-'+row.id;
     paragraph.append(anchor);
+    if(translated) {
+      anchor.textContent=row.entry.translation;
+      continue;
+    }
     let pos = 0;
     row.words.forEach(([start,length],wordId) => {
       paragraph.append(row.text.slice(pos,start));
@@ -500,14 +533,15 @@ async function renderPack(page = state.page) {
     });
     paragraph.append(row.text.slice(pos));
   }
-  $('title').textContent=active.title;
-  $('chapters').hidden=active.chapters ? !active.chapters.length : !rows[0].chapter;
-  $('chapters').textContent=(rows[0].chapter || 'Chapters')+' ▾';
-  updatePageControls(active.pages);
-  $('status').textContent = 'Tap a word for its meaning.';
-  updateProgress();
-  return true;
+  $('status').textContent=translated ? '' : 'Tap a word for its meaning.';
 }
+$('readingVersion').onclick=()=>{
+  dismiss();
+  const translated=$('readingVersion').getAttribute('aria-pressed')==='true';
+  state.translatedBook=translated ? '' : pack.book;
+  state.translatedLanguage=translated ? '' : state.target;
+  drawPackPassage(); save();
+};
 // Older APKs expose chapter labels one page at a time. Build their index only on demand.
 async function legacyChapters(active) {
   const chapters=[];
@@ -560,6 +594,7 @@ function updateProgress() {
   $('progress').hidden = false;
   $('progress').textContent = ready+' / '+rows.length+' sentences available offline in '+languages[state.target]+'.';
   if (generation) $('progress').textContent += ' Preparing page '+(generation.job.page+1)+'…';
+  $('readingVersion').hidden = !rows.length || ready!==rows.length;
   $('prepare').disabled = !generation && ready===rows.length;
   $('prepare').textContent = generation ? 'Pause preparation' : 'Prepare this page';
 }
@@ -613,7 +648,7 @@ $('packOpen').onclick = async () => {
     if (!item) return;
     if (item.format==='reader.book.1') await enterPack(item);
     else {
-      stopGeneration(); state.target=item.lang; $('target').value=item.lang;
+      stopGeneration(); chooseTarget(item.lang);
       if (await renderPack()) { showView('reader'); save(); }
     }
   } catch(error) {report(error);}
@@ -653,6 +688,8 @@ function shelfMessage(message) {
   $('shelfStatus').hidden=!message;
 }
 function drawShelf(library) {
+  $('shelfTarget').value=store ? state.target : 'en';
+  $('shelfTarget').disabled=!store || shelfBusy;
   catalogueReady=library.connected && state.catalogueSource===catalogueFileId;
   const grid=$('bookGrid');
   grid.replaceChildren();
@@ -673,6 +710,7 @@ function drawShelf(library) {
 }
 function setShelfBusy(busy) {
   shelfBusy=busy;
+  $('shelfTarget').disabled=!store || busy;
   $('shelf').setAttribute('aria-busy',String(busy));
   for(const element of $('shelf').querySelectorAll('button')) element.disabled=busy;
 }
@@ -696,8 +734,7 @@ async function selectBook(item) {
   setShelfBusy(true);shelfMessage(item.local?'Opening book…':'Checking for book updates…');
   try {
     const info=item.local?await readerAction('info',{book:item.local}):await readerAction('download',{slug:item.id});
-    if(state.target!=='en')stopGeneration();
-    state.target='en';$('target').value='en';
+    if(!store && !item.local) chooseTarget('en');
     await enterPack(info);
   } catch(error){shelfMessage(error.message);}
   finally{setShelfBusy(false);}
