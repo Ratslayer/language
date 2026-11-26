@@ -83,7 +83,58 @@ test('shelf counts and downloads use the selected language',async()=>{
   assert.equal((await catalogue.shelf(undefined,'en')).books[0].ready,0);
   const installs=[];
   catalogue.refresh=async()=>{};
-  catalogue.install=async(id,lang)=>{assert.equal(id,book);installs.push(lang);};
-  await catalogue.open('painting','ru');
+  catalogue.install=async(item,lang)=>{assert.equal(item.bookId,book);installs.push(lang);};
+  const cached=await catalogue.open('painting','ru');
+  assert.deepEqual(installs,[]);
+  await catalogue.update('painting','ru',cached,()=>{});
   assert.deepEqual(installs,['','ru']);
+});
+test('cached pages remain readable during delayed refresh and translation download, and a failed update is retryable',async()=>{
+  const SQL=await init(),files=new MemoryFiles(),store=new ReaderStore(SQL,files);
+  const {book}=await store.fromText('Old','en','First. Second.');
+  const newer=new ReaderStore(SQL,new MemoryFiles());
+  const revised=await newer.fromText('New','en','Third. Fourth.');
+  await newer.save(revised.book,'ru',1,entry('три'));
+  const original={fileId:'oldBookFile',sha256:'a'.repeat(64)};
+  const replacement={fileId:'newBookFile',sha256:'b'.repeat(64)};
+  const lang={fileId:'russianFile',sha256:'c'.repeat(64),readyPages:[]};
+  const item={id:'painting',title:'Old',bookId:book,pages:1,source:original,languages:{}};
+  const manifest={version:1,books:[{...item,title:'New',bookId:revised.book,source:replacement,languages:{ru:lang}}]};
+  const encode=obj=>new TextEncoder().encode(JSON.stringify(obj));
+  const index='catalogueFile';
+  await files.write('catalogue.json',encode({source:index,books:[item],checkpoints:{
+    ['active:'+index+':painting']:book,['installed:'+book+':source']:original.sha256
+  }}));
+  const catalogue=new BookCatalogue(store,files);
+  await catalogue.init();
+  const opened=await catalogue.open(item.id,'ru');
+  await store.page(book,'ru',0);
+  const manifestGate=Promise.withResolvers(),packGate=Promise.withResolvers();
+  const calls=[];
+  files.download=async({fileId})=>{
+    calls.push(fileId);
+    if(fileId===index) {await manifestGate.promise;return encode(manifest);}
+    if(fileId===replacement.fileId) return newer.files.read(filename(revised.book));
+    await packGate.promise;throw new Error('offline');
+  };
+  const switched=Promise.withResolvers();
+  const syncing=catalogue.update(item.id,'ru',opened,async change=>{
+    assert.equal(change.source.title,'New'); await store.page(revised.book,'ru',0); switched.resolve();
+  });
+  const repeated=catalogue.refresh(index);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls,[index]);
+  assert.equal(store.cachedPage(book,'ru',0)[0].text,'First.');
+  manifestGate.resolve();await repeated;await switched.promise;
+  assert.equal(store.cachedPage(revised.book,'ru',0)[0].text,'Third.');
+  packGate.resolve();await assert.rejects(syncing,/offline/);
+  const cached=await catalogue.open(item.id,'ru');
+  assert.equal(cached.book,revised.book);
+  assert.deepEqual((await catalogue.shelf()).books.map(b=>b.id),['painting']);
+  files.download=async({fileId})=>fileId===index ? encode(manifest) : newer.files.read(filename(revised.book,'ru'));
+  const changes=[];
+  await catalogue.update(item.id,'ru',cached,c=>changes.push(c));
+  assert.deepEqual(changes,[{translations:revised.book}]);
+  assert.equal(store.cachedPage(revised.book,'ru',0)[0].entry.translation,'три');
+  await catalogue.update(item.id,'ru',await catalogue.open(item.id,'ru'),()=>assert.fail('unchanged book redrew'));
 });

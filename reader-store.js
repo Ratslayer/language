@@ -93,7 +93,7 @@ class ReaderStore {
   }
   async translations(book,lang,create=false) {
     const path=filename(book,lang);
-    if(this.openTranslation?.path===path) return this.openTranslation.db;
+    if(this.openTranslation?.path===path && (this.openTranslation.db || !create)) return this.openTranslation.db;
     let db;
     if(await this.files.size(path)>=0) db=new this.SQL.Database(await this.files.read(path));
     else if(create) {
@@ -101,18 +101,24 @@ class ReaderStore {
       db.run('CREATE TABLE meta(format TEXT,book_id TEXT,lang TEXT,title TEXT)');
       db.run('INSERT INTO meta VALUES(?,?,?,?)',[translationFormat,book,lang,'']);
       db.run('CREATE TABLE entries(sid INTEGER PRIMARY KEY,payload TEXT NOT NULL)');
-    } else return null;
-    db.run('PRAGMA trusted_schema=OFF');
+    } else db=null;
+    db?.run('PRAGMA trusted_schema=OFF');
     this.closeTranslations();
     this.openTranslation={path,db};
     return db;
   }
   closeTranslations() {
-    this.openTranslation?.db.close();
+    this.openTranslation?.db?.close();
     this.openTranslation=null;
   }
+  cachedPage(book,lang,page,withIllustrations) {
+    if(this.openSource?.book===book && this.openTranslation?.path===filename(book,lang) && !this.saving)
+      return this.readPage(this.openSource.db,this.openTranslation.db,page,withIllustrations);
+  }
   async page(book,lang,page,withIllustrations=false) {
-    const db=await this.source(book), translations=await this.translations(book,lang);
+    return this.readPage(await this.source(book),await this.translations(book,lang),page,withIllustrations);
+  }
+  readPage(db,translations,page,withIllustrations) {
     const rows=queryRows(db,'SELECT id,para,chapter,pdf_start AS pdf,pdf_end AS pdfEnd,text,words FROM sentences WHERE page=? ORDER BY id',[page]);
     requireData(rows.length,'Page does not exist.');
     const entries=new Map();
@@ -141,17 +147,24 @@ class ReaderStore {
     });
     return new Set([...complete].filter(([,ready])=>ready).map(([page])=>page));
   }
-  async writeTranslations(book,lang,apply) {
-    const db=await this.translations(book,lang,true);
+  async writeTranslations(book,lang,apply,stage=false) {
+    const current=await this.translations(book,lang,true);
+    const db=stage ? new this.SQL.Database(current.export()) : current;
+    this.saving=!stage;
     try {
       db.run('BEGIN');
       apply(db);
       db.run('COMMIT');
       await this.files.write(filename(book,lang),db.export());
+      if(stage) {
+        this.closeTranslations();
+        this.openTranslation={path:filename(book,lang),db};
+      }
     } catch(error) {
-      this.closeTranslations(); // Next read sees the last atomically saved snapshot.
+      if(stage) db.close();
+      else this.closeTranslations();
       throw error;
-    }
+    } finally { this.saving=false; }
   }
   async save(book,lang,sid,entry) {
     const source=await this.source(book);
@@ -163,6 +176,7 @@ class ReaderStore {
   }
   async importBytes(bytes,current,expected) {
     const db=new this.SQL.Database(bytes);
+    let adopted=false;
     try {
       db.run('PRAGMA trusted_schema=OFF; PRAGMA query_only=ON');
       requireData(db.exec('PRAGMA quick_check(1)')[0]?.values[0][0]==='ok','Damaged SQLite file.');
@@ -184,7 +198,7 @@ class ReaderStore {
               insert.run([r.sid,r.payload]);
             });
           } finally {insert.free();}
-        });
+        },true);
         return info;
       }
       requireData(info.format===bookFormat,'Unsupported book format.');
@@ -201,10 +215,12 @@ class ReaderStore {
       const path=filename(info.book);
       if(expected || await this.files.size(path)<0) {
         await this.files.write(path,bytes);
-        if(this.openSource?.book===info.book){this.openSource.db.close();this.openSource=null;}
+        this.openSource?.db.close();
+        this.openSource={book:info.book,db};
+        adopted=true;
       }
       return await this.describe(info.book);
-    } finally {db.close();}
+    } finally {if(!adopted) db.close();}
   }
   async fromText(name,lang,text) {
     const book=await digestHex(new TextEncoder().encode(bookFormat+'\n'+lang+'\n'+text));

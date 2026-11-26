@@ -68,4 +68,13 @@ nav { margin-top: 1.5rem; }
 #chapterList button { text-align:start; border:0; }
 #chapterList [aria-current] { background:#d3e4ba; font-weight:bold; }
 
-#passage > canvas { display:block; max-width:100%; height:auto; margin:1em auto .25em; }
+#passage .illustration { display:block; max-width:100%; margin:1em auto .25em; padding:0; border:0; border-radius:0; background:none; cursor:zoom-in; }
+.illustration canvas { display:block; max-width:100%; height:auto; }
+html:has(#imageViewer[open]) { overflow:hidden; }
+#imageViewer { position:fixed; inset:0; width:100%; height:100%; max-width:none; max-height:none; margin:0; padding:0; border:0; overflow:hidden; background:#101210; color:white; }
+#imageViewer::backdrop { background:#101210; }
+#imageViewer canvas { display:block; width:100%; height:100%; touch-action:none; user-select:none; }
+.imageControls { position:absolute; right:max(.75rem,env(safe-area-inset-right)); top:max(.75rem,env(safe-area-inset-top)); display:flex; gap:.25rem; }
+.imageControls button { touch-action:manipulation; min-width:44px; min-height:44px; padding:0 .65rem; background:#202420ee; color:white; border-color:#717771; font:500 1rem system-ui,sans-serif; }
+.imageControls button:disabled { opacity:1; color:#a1a7a1; }
+.imageControls [data-close] { margin-left:.4rem; }

@@ -41,14 +41,18 @@ function serialized(work) {
 }
 function readerAction(action,args={}) {
   if(!store) return call('book.'+action,args); // Pages can update before the APK.
+  const {book,lang,page}=args;
+  if(action==='shelf') return catalogue.shelf(args.source,state.target);
+  if(action==='download') return catalogue.open(args.slug,state.target);
+  if(action==='page') {
+    const cached=store.cachedPage(book,lang,page,args.withIllustrations);
+    if(cached) return Promise.resolve(cached);
+  }
   return serialized(async ()=>{
-    const {book,lang,page}=args;
     switch(action) {
       case 'info': return store.describe(book);
       case 'page': return store.page(book,lang,page,args.withIllustrations);
       case 'save': return store.save(book,lang,args.sid,args.entry);
-      case 'shelf': return catalogue.shelf(args.source,state.target);
-      case 'download': return catalogue.open(args.slug,state.target);
       case 'pick': {
         const path=files.temporary();
         try {
@@ -203,20 +207,27 @@ function dismiss() {
   popup.hidden = true;
   if (popup.parentNode !== $('reader')) $('reader').append(popup);
 }
+const openImage=createImageViewer($('imageViewer'));
 function appendIllustrations(article, illustrations) {
   for (const {width,height,mime,alt,data} of illustrations) {
     const canvas=document.createElement('canvas');
     canvas.width=width; canvas.height=height;
-    canvas.setAttribute('role','img');
-    canvas.setAttribute('aria-label',alt || 'Book illustration');
-    article.append(canvas);
-    createImageBitmap(new Blob([data],{type:mime})).then(bitmap=>{
+    const label=alt || 'Book illustration',button=document.createElement('button');
+    button.className='illustration'; button.type='button';
+    button.setAttribute('aria-label','View '+label);
+    button.setAttribute('aria-haspopup','dialog');
+    button.append(canvas); article.append(button);
+    const decoded=createImageBitmap(new Blob([data],{type:mime})).then(bitmap=>{
       try {
         if(canvas.isConnected) canvas.getContext('2d').drawImage(bitmap,0,0,width,height);
       } finally { bitmap.close(); }
     }).catch(()=>{
-      if(canvas.isConnected) canvas.replaceWith(document.createTextNode('Could not display illustration. '+alt));
+      if(button.isConnected) button.replaceWith(document.createTextNode('Could not display illustration. '+alt));
     });
+    button.onclick=async()=>{
+      await decoded;
+      if(button.isConnected && !$('imageViewer').open) openImage(canvas,button,label);
+    };
   }
 }
 function render() {
@@ -345,7 +356,12 @@ $('shelfTarget').onchange=()=>{
   chooseTarget($('shelfTarget').value);
   save(); refreshShelf();
 };
-async function goToPage(page, chapterStart) {
+let navigation=Promise.resolve();
+function goToPage(page,chapterStart) {
+  navigation=moveToPage(page,chapterStart);
+  return navigation;
+}
+async function moveToPage(page, chapterStart) {
   const total = pack?.pages ?? pages.length;
   if (!Number.isInteger(page) || page < 0 || page >= total) return;
   if (pack) {
@@ -405,7 +421,7 @@ async function init() {
     if(privateFiles) {
       files=new PageFiles(call);
       store=new ReaderStore(await loadSqlite(),files);
-      catalogue=new BookCatalogue(store,files);
+      catalogue=new BookCatalogue(store,files,serialized);
       await catalogue.init();
       packSupport=true;
     } else {
@@ -501,13 +517,16 @@ async function renderPack(page = state.page) {
   updateProgress();
   return true;
 }
-function drawPackPassage() {
-  const article = $('passage');
+function setReadingVersion() {
   const canReadTranslation=rows.length>0 && rows.every(row=>row.entry?.translation);
   const translated=canReadTranslation && state.translatedBook===pack.book && state.translatedLanguage===state.target;
   $('readingVersion').hidden=!canReadTranslation;
   $('readingVersion').setAttribute('aria-pressed',String(translated));
   $('readingVersion').textContent=translated ? 'Read original' : 'Read in '+(languages[state.target] || state.target);
+  return translated;
+}
+function drawPackPassage() {
+  const article=$('passage'),translated=setReadingVersion();
   article.replaceChildren(); article.lang=translated ? state.target : pack.lang;
   let paragraph = null, lastPara = null;
   for (const row of rows) {
@@ -668,6 +687,7 @@ function shelfMode(refreshing=false) {
   return call('book.shelfMode',{visible,refreshing});
 }
 function showView(id) {
+  if (id !== 'reader') readingSession=null;
   if (id !== 'reader' && !$('reader').hidden) pageVersion++;
   stopTracking();
   dismiss();
@@ -714,28 +734,102 @@ function setShelfBusy(busy) {
   $('shelf').setAttribute('aria-busy',String(busy));
   for(const element of $('shelf').querySelectorAll('button')) element.disabled=busy;
 }
+let shelfRequest=0;
 async function refreshShelf(refresh=false) {
   if(shelfBusy || $('shelf').hidden) return;
-  setShelfBusy(true);shelfMessage('');
+  const request=++shelfRequest;
+  if(!store) setShelfBusy(true);
+  shelfMessage('');
   try {
     const fetchFromDrive=refresh || !catalogueReady;
     await shelfMode(fetchFromDrive);
-    const library=await readerAction('shelf',fetchFromDrive ? {source:catalogueFileId} : {});
+    if(store && fetchFromDrive) await catalogue.refresh(catalogueFileId);
+    if(request!==shelfRequest || $('shelf').hidden) return;
+    const library=await readerAction('shelf',!store && fetchFromDrive ? {source:catalogueFileId} : {});
+    if(request!==shelfRequest || $('shelf').hidden) return;
     if(fetchFromDrive && library.connected && state.catalogueSource!==catalogueFileId) {
       state.catalogueSource=catalogueFileId;
       save();
     }
     drawShelf(library);
-  } catch(error){shelfMessage('Could not load the book catalogue. '+error.message+' Tap Refresh to retry.');}
-  finally{setShelfBusy(false);await shelfMode().catch(report);}
+  } catch(error){
+    if(request===shelfRequest && !$('shelf').hidden) shelfMessage('Could not load the book catalogue. '+error.message+' Tap Refresh to retry.');
+  } finally {
+    if(!store) setShelfBusy(false);
+    if(request===shelfRequest) await shelfMode().catch(report);
+  }
 }
+let readingSession=null;
+function rememberEdition(slug,bookId) {
+  const editions=state.catalogueEditions ??= {};
+  const old=Object.hasOwn(editions,slug) && editions[slug];
+  if(old && old!==bookId) {
+    state.bookmarks[bookId]={...bookmarkFor(old)};
+    if(state.translatedBook===old) state.translatedBook=bookId;
+  }
+  editions[slug]=bookId;
+}
+async function applyBookUpdate(session,change) {
+  const current=()=>readingSession===session && !$('reader').hidden && state.target===session.lang;
+  // Finish a user's page jump before sampling the current page and scroll position.
+  let moving;
+  do {
+    moving=navigation;
+    await moving.catch(()=>{});
+  } while(moving!==navigation);
+  if(!current()) return;
+  if(change.source) {
+    const info=change.source;
+    session.copy=catalogue.snapshot(info,session.lang);
+    stopTracking();
+    rememberEdition(session.slug,info.book);
+    await enterPack(info);
+    return;
+  }
+  if(pack.book!==change.translations) return;
+  const revision=pageVersion;
+  const updated=await readerAction('page',{book:pack.book,page:state.page,lang:session.lang});
+  if(!current() || revision!==pageVersion) return;
+  const entries=new Map(updated.map(row=>[row.id,row.entry]));
+  for(const row of rows) row.entry=entries.get(row.id);
+  if(setReadingVersion()) {
+    const offset=window.scrollY;
+    drawPackPassage();
+    trackPage(offset);
+  } else if(selection && preparedAnswer(selection,$('sentence').hidden)) {
+    lookup($('sentence').hidden);
+  }
+  updateProgress();
+}
+async function checkReadingUpdates(session) {
+  if(!session || session.checking || document.hidden) return;
+  session.checking=true;
+  try {
+    session.copy=await catalogue.update(session.slug,session.lang,session.copy,change=>applyBookUpdate(session,change));
+    session.lastCheck=Date.now();
+  } catch {
+    // Keep the open page usable offline. Retry on reconnect, resume or the next open.
+    session.lastCheck=0;
+  } finally {session.checking=false;}
+}
+window.addEventListener('online',()=>checkReadingUpdates(readingSession));
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden && readingSession && Date.now()-readingSession.lastCheck>60_000)
+    checkReadingUpdates(readingSession);
+});
 async function selectBook(item) {
   if(shelfBusy)return;
-  setShelfBusy(true);shelfMessage(item.local?'Opening book…':'Checking for book updates…');
+  shelfRequest++;
+  setShelfBusy(true);shelfMessage('Opening book…');
   try {
     const info=item.local?await readerAction('info',{book:item.local}):await readerAction('download',{slug:item.id});
     if(!store && !item.local) chooseTarget('en');
+    if(store && item.id) rememberEdition(item.id,info.book);
     await enterPack(info);
+    if(store && item.id && !$('reader').hidden && pack?.book===info.book) {
+      readingSession={slug:item.id,lang:state.target,copy:info,lastCheck:0};
+      checkReadingUpdates(readingSession);
+    }
   } catch(error){shelfMessage(error.message);}
   finally{setShelfBusy(false);}
 }
@@ -747,8 +841,13 @@ function returnToShelf() {
 }
 $('backToBooks').onclick = returnToShelf;
 $('filesBack').onclick = () => hasShelf ? returnToShelf() : showView('reader');
-window.addEventListener('tool-back',()=> $('chapterDialog').open ? $('chapterDialog').close() : returnToShelf());
+function readerBack() {
+  if($('imageViewer').open) $('imageViewer').close();
+  else if($('chapterDialog').open) $('chapterDialog').close();
+  else returnToShelf();
+}
+window.addEventListener('tool-back',readerBack);
 window.addEventListener('tool-refresh',()=>{if(!shelfBusy)refreshShelf(true);else shelfMode().catch(report);});
-window.addEventListener('reader-books',returnToShelf);
+window.addEventListener('reader-books',readerBack);
 window.addEventListener('reader-refresh',()=>{if(!shelfBusy)refreshShelf(true);else shelfMode().catch(report);});
 init().catch(report);
