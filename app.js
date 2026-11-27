@@ -284,6 +284,21 @@ function wordButton(text, context) {
   };
   return button;
 }
+function positionPopup() {
+  if (popup.hidden) return;
+  const rect=selection.button.getBoundingClientRect();
+  const view=window.visualViewport;
+  popup.style.setProperty('--view-left',(view?.pageLeft ?? window.scrollX)+'px');
+  popup.style.setProperty('--view-width',(view?.width || document.documentElement.clientWidth)+'px');
+  popup.style.setProperty('--view-height',(view?.height || window.innerHeight)+'px');
+  popup.style.setProperty('--word-center',(window.scrollX+rect.left+rect.width/2)+'px');
+  popup.style.top=(window.scrollY+rect.bottom+4)+'px';
+}
+// Document coordinates follow normal scrolling. Recompute when the text reflows or the user zooms.
+new ResizeObserver(positionPopup).observe($('reader'));
+window.addEventListener('resize',positionPopup);
+window.visualViewport?.addEventListener('resize',positionPopup);
+window.visualViewport?.addEventListener('scroll',positionPopup);
 function selectScope(full) {
   const {button, sentence} = selection;
   const span = button.parentElement;
@@ -292,8 +307,6 @@ function selectScope(full) {
   updateBookmarkButton();
   button.classList.toggle('active', !full);
   span.classList.toggle('activeSentence', full);
-  const rect=button.getBoundingClientRect();
-  popup.classList.toggle('atTop',(rect.top+rect.bottom)/2>(window.visualViewport?.height || innerHeight)/2);
   popup.hidden = false;
   $('rules').lang=grammarLanguage();
   $('rules').textContent=grammarText('Rules',grammarLanguage());
@@ -302,6 +315,12 @@ function selectScope(full) {
   pronunciation.select(full ? sentence.trim() : button.textContent, state.source,
     languageName(state.source), full);
   lookup();
+  positionPopup();
+  // At the lower edge, reveal the overlay while keeping the tapped word visible.
+  const view=window.visualViewport;
+  const viewTop=view?.offsetTop || 0;
+  const overflow=popup.getBoundingClientRect().bottom-(viewTop+(view?.height || innerHeight));
+  if (overflow>0) window.scrollBy(0,Math.min(overflow+8,Math.max(0,button.getBoundingClientRect().top-viewTop-8)));
   if(button.matches(':focus-visible')) toggle.focus({preventScroll:true});
 }
 // Personal selections are separate from the automatic resume position and downloaded books.

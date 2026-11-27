@@ -30,16 +30,18 @@ nav { margin-top: 1.5rem; }
 #pageNumber { width: 5em; padding: .4rem .5rem; background: #fffdf7; border: 1px solid #a9b1a4; border-radius: .4rem; }
 #pageTotal { font-variant-numeric: tabular-nums; }
 #popup {
-  position: fixed;
+  position: absolute;
   z-index: 2;
-  inset-inline: 0;
-  bottom: max(.5rem,env(safe-area-inset-bottom));
   display: block;
-  width: min(26rem,calc(100% - 1rem - env(safe-area-inset-left) - env(safe-area-inset-right)));
-  max-height: calc(100% - 1rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  --left-gap: max(.5rem,env(safe-area-inset-left));
+  --right-gap: max(.5rem,env(safe-area-inset-right));
+  --panel-width: min(26rem,calc(min(100%,var(--view-width)) - var(--left-gap) - var(--right-gap)));
+  width: var(--panel-width);
+  left: clamp(calc(var(--view-left) + var(--left-gap)),calc(var(--word-center) - var(--panel-width) / 2),
+    calc(min(100%,var(--view-left) + var(--view-width)) - var(--panel-width) - var(--right-gap)));
+  max-height: calc(var(--view-height) - 1rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   overflow: auto;
   overscroll-behavior: contain;
-  margin: 0 auto;
   padding: .7rem .95rem;
   border: 1px solid #81917e;
   border-radius: .65rem;
@@ -49,7 +51,6 @@ nav { margin-top: 1.5rem; }
   white-space: normal;
   box-shadow: 0 .2rem 1rem #17231b30;
 }
-#popup.atTop { top:max(.5rem,env(safe-area-inset-top)); bottom:auto; }
 .translationHeading { display: flex; flex-wrap:wrap; align-items: center; gap: .45rem; }
 #word { overflow-wrap: anywhere; }
 #pronounce { flex: none; min-width: 44px; min-height: 44px; padding: .25rem; }
