@@ -570,12 +570,24 @@ $('readingVersion').onclick=()=>{
 };
 const navigationPanel=$('readerNavigation');
 let panelRevision=0;
-function closeNavigation() {
-  if(navigationPanel.hidden) return;
+let poppingPanelEntry=false;
+function hideNavigation() {
   ++panelRevision;
   const hadFocus=navigationPanel.contains(document.activeElement);
   navigationPanel.hidden=true;
+  document.querySelector('main').inert=false;
   if(hadFocus) $('title').focus({preventScroll:true});
+}
+function closeNavigation() {
+  if(navigationPanel.hidden) return;
+  hideNavigation();
+  if(history.state?.languageControls && !poppingPanelEntry) {
+    poppingPanelEntry=true;
+    history.back();
+  }
+}
+function pushPanelEntry() {
+  history.pushState({...history.state,languageControls:state.hash},'');
 }
 // Older APKs expose chapter labels one page at a time. Cancel the scan when the panel closes.
 async function legacyChapters(active,revision) {
@@ -598,6 +610,8 @@ async function openNavigation() {
   list.replaceChildren();
   $('chapterSection').hidden=!active || active.chapters?.length===0;
   $('pageNumber').value=state.page+1;
+  if(!poppingPanelEntry && history.state?.languageControls!==state.hash) pushPanelEntry();
+  document.querySelector('main').inert=true;
   navigationPanel.hidden=false;
   navigationPanel.scrollTop=0;
   $('navigationClose').focus({preventScroll:true});
@@ -622,7 +636,7 @@ async function openNavigation() {
     }
     if(current) {
       current.setAttribute('aria-current','location');
-      list.scrollTop=current.getBoundingClientRect().top-list.getBoundingClientRect().top;
+      navigationPanel.scrollTop=current.getBoundingClientRect().top-list.getBoundingClientRect().top;
     }
   } catch(error) {if(revision===panelRevision) list.textContent=error.message;}
 }
@@ -976,6 +990,13 @@ function closeReaderOverlay() {
 }
 function readerBack() { if(!closeReaderOverlay()) returnToShelf(); }
 window.addEventListener('popstate',event=>{
+  if(poppingPanelEntry) {
+    poppingPanelEntry=false;
+    if(!navigationPanel.hidden) pushPanelEntry();
+    return;
+  }
+  if(event.state?.languageControls===state.hash && !$('reader').hidden) {openNavigation(); return;}
+  if(!navigationPanel.hidden) {hideNavigation(); return;}
   if(hasShelf) return;
   if(closeReaderOverlay()) {history.pushState({languageView:'reader'},''); return;}
   const view=event.state?.languageView;
