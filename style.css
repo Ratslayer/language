@@ -35,13 +35,13 @@ nav { margin-top: 1.5rem; }
   white-space: normal;
   scroll-margin-block: 2.5rem .5rem;
 }
-.translationHeading { display: flex; align-items: center; gap: .45rem; }
+.translationHeading { display: flex; flex-wrap:wrap; align-items: center; gap: .45rem; }
 #word { overflow-wrap: anywhere; }
 #pronounce { flex: none; min-width: 44px; min-height: 44px; padding: .25rem; }
 #close { flex: none; margin-inline-start: auto; padding: .25rem .65rem; }
 #speechStatus:not(:empty) { display: block; margin-block: .25rem; }
 #answer { display: block; margin: .25rem 0; white-space: pre-line; overflow-wrap: anywhere; }
-#sentence { flex: none; min-height: 44px; font-size: .9rem; }
+#sentence, #rules { flex: none; min-height: 44px; font-size: .9rem; }
 [hidden] { display: none !important; }
 #packTools { display:flex; flex-wrap:wrap; align-items:baseline; gap:.75rem; margin-top:.8rem; }
 #packActions summary { cursor:pointer; }
@@ -100,3 +100,24 @@ html:has(#imageViewer[open]) { overflow:hidden; }
 .imageControls button { touch-action:manipulation; min-width:44px; min-height:44px; padding:0 .65rem; background:#202420ee; color:white; border-color:#717771; font:500 1rem system-ui,sans-serif; }
 .imageControls button:disabled { opacity:1; color:#a1a7a1; }
 .imageControls [data-close] { margin-left:.4rem; }
+
+#meaning, #wordDetails { display:block; }
+#wordDetails { white-space:normal; }
+#grammarLabel { color:#4b5d4d; }
+html:has(#grammarDialog[open]) { overflow:hidden; }
+#grammarDialog { width:min(26rem,calc(100% - 2rem)); max-height:85dvh; overflow:auto; overscroll-behavior:contain;
+  color:#232b23; background:#fffef9; border:1px solid #81917e; border-radius:.7rem; padding:1rem 1.2rem; }
+#grammarDialog::backdrop { background:#17231bc0; }
+#grammarDialog header { flex-wrap:nowrap; align-items:start; }
+#grammarTitle { margin:0; overflow-wrap:anywhere; }
+#closeRules { min-width:44px; min-height:44px; }
+#ruleLabel { margin:0; font-style:italic; color:#4b5d4d; }
+#ruleLabel:empty { display:none; }
+#ruleNote { margin:.6rem 0; }
+#tenseControl { display:block; margin:.75rem 0; }
+#grammarTense { max-width:100%; }
+#grammarTable { border-collapse:collapse; width:100%; margin-top:.5rem; overflow-wrap:anywhere; }
+#grammarTable th, #grammarTable td { padding:.35rem .5rem; border-bottom:1px solid #d6dccf; text-align:start; }
+#grammarTable th { font-weight:500; }
+#grammarTable tr[aria-current] { background:#e1ecd6; }
+#grammarTable tr[aria-current] > * { font-weight:700; }
