@@ -151,7 +151,7 @@ function stopTracking() {
   readingPosition = null;
 }
 function trackPage(offset) {
-  if ($('reader').hidden || !state.hash) return;
+  if ($('reader').hidden || !navigationPanel.hidden || !state.hash) return;
   window.scrollTo(0, Number.isFinite(offset) ? offset : 0);
   readingPosition = { page:state.page, scrollY:Math.max(0, Math.round(window.scrollY)) };
   state.bookmarks[state.hash] = readingPosition;
@@ -575,7 +575,9 @@ function hideNavigation() {
   ++panelRevision;
   const hadFocus=navigationPanel.contains(document.activeElement);
   navigationPanel.hidden=true;
-  document.querySelector('main').inert=false;
+  document.querySelector('main').hidden=false;
+  const saved=bookmarkFor(state.hash);
+  trackPage(saved.page===state.page ? saved.scrollY : 0);
   if(hadFocus) $('title').focus({preventScroll:true});
 }
 function closeNavigation() {
@@ -610,10 +612,16 @@ async function openNavigation() {
   list.replaceChildren();
   $('chapterSection').hidden=!active || active.chapters?.length===0;
   $('pageNumber').value=state.page+1;
+  // Read the visible sentence anchors while the passage still has a layout.
+  let reachedId=rows[0]?.id;
+  for(const row of rows) {
+    if($('sentence-'+row.id)?.getBoundingClientRect().top<=1) reachedId=row.id;
+  }
   if(!poppingPanelEntry && history.state?.languageControls!==state.hash) pushPanelEntry();
-  document.querySelector('main').inert=true;
+  stopTracking();
+  document.querySelector('main').hidden=true;
   navigationPanel.hidden=false;
-  navigationPanel.scrollTop=0;
+  window.scrollTo(0,0);
   $('navigationClose').focus({preventScroll:true});
   if($('chapterSection').hidden) return;
   try {
@@ -631,19 +639,15 @@ async function openNavigation() {
       button.textContent=start.chapter+' · p. '+(start.page+1);
       button.onclick=()=>goToPage(start.page,start).catch(report);
       list.append(button);
-      if(start.page<state.page || (start.page===state.page &&
-        (start.id===rows[0]?.id || $('sentence-'+start.id)?.getBoundingClientRect().top<=1))) current=button;
+      if(start.page<state.page || (start.page===state.page && start.id<=reachedId)) current=button;
     }
     if(current) {
       current.setAttribute('aria-current','location');
-      navigationPanel.scrollTop=current.getBoundingClientRect().top-list.getBoundingClientRect().top;
+      window.scrollTo(0,current.getBoundingClientRect().top-list.getBoundingClientRect().top);
     }
   } catch(error) {if(revision===panelRevision) list.textContent=error.message;}
 }
 $('navigationClose').onclick=closeNavigation;
-document.addEventListener('click',event=>{
-  if(!navigationPanel.hidden && !navigationPanel.contains(event.target)) closeNavigation();
-});
 
 let wheelDistance=0,lastWheel=0;
 function pullWithWheel(event) {
