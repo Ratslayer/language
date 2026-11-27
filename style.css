@@ -60,12 +60,11 @@ nav { margin-top: 1.5rem; }
 .shelfControls button { font-size:.88rem; }
 html:has(#reader:not([hidden])) { overscroll-behavior:none; }
 #reader { touch-action:pan-y pinch-zoom; }
+html:has(#readerNavigation:not([hidden])) { overflow:hidden; }
 #readerNavigation {
-  position:fixed; z-index:2; top:0; left:0; width:100%;
-  min-height:66vh; min-height:66dvh; max-height:90vh; max-height:90dvh;
-  display:grid; grid-template-rows:auto minmax(7rem,1fr);
-  padding:.75rem 1rem;
-  padding-top:max(.75rem,env(safe-area-inset-top));
+  position:fixed; z-index:2; inset:0 0 auto;
+  min-height:66vh; min-height:66dvh; max-height:100vh; max-height:100dvh;
+  padding:0 1rem max(.75rem,env(safe-area-inset-bottom));
   padding-inline:max(1rem,env(safe-area-inset-left)) max(1rem,env(safe-area-inset-right));
   background:#fffdf7; border-bottom:1px solid #a9b1a4; border-radius:0 0 .65rem .65rem;
   box-shadow:0 .25rem .9rem #22342829; overscroll-behavior:contain; overflow-y:auto;
@@ -74,16 +73,17 @@ html:has(#reader:not([hidden])) { overscroll-behavior:none; }
   #readerNavigation { animation:dropNavigation .16s ease-out; }
   @keyframes dropNavigation { from { top:-1rem; } }
 }
-.navigationControls, #chapterSection { width:100%; max-width:46rem; min-width:0; margin-inline:auto; }
+.navigationControls { position:sticky; top:0; z-index:1; background:#fffdf7; padding:max(.75rem,env(safe-area-inset-top)) 0 .5rem; }
 .navigationHeader { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:.5rem; }
+@media (max-height:26rem) {
+  .navigationControls { display:contents; }
+  .navigationHeader { position:sticky; top:0; z-index:1; background:#fffdf7; padding-block:.5rem; }
+}
 #readerNavigation button, #pageNumber { min-height:44px; }
 #navigationClose { min-width:44px; }
 #readingVersion { margin-top:.5rem; }
-#chapterSection { display:grid; grid-template-rows:auto minmax(0,1fr); min-height:0; }
 #chapterHeading { margin:.6rem 0 .25rem; font-size:1.2rem; }
-#chapterList { overflow-y:auto; overscroll-behavior:contain; }
 #chapterList button { display:block; width:100%; overflow-wrap:anywhere; text-align:start; border:0; }
-#readerNavigation:has(#chapterSection[hidden]) { min-height:0; grid-template-rows:auto; }
 #chapterList [aria-current] { background:#d3e4ba; font-weight:bold; }
 
 #passage .illustration { display:block; max-width:100%; margin:1em auto .25em; padding:0; border:0; border-radius:0; background:none; cursor:zoom-in; }
