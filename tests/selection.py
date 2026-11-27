@@ -17,7 +17,9 @@ window.AiPages = {postMessage(message) {
   if (q.method === 'text.incoming') return send(window.fixture);
   if (q.method === 'book.page') return send(window.testRows);
   if (q.method === 'speech.speak') return send('spoken');
-  if (q.method === 'storage.read') return send(JSON.stringify({source:window.testSource || 'es', target:window.testTarget || 'en'}));
+  if (q.method === 'storage.read') return send(localStorage.getItem('testState') ||
+    JSON.stringify({source:window.testSource || 'es', target:window.testTarget || 'en', grammarFallback:window.testFallback}));
+  if (q.method === 'storage.write') { localStorage.setItem('testState', q.value); return send(null); }
   send(null);
 }};
 """
@@ -137,6 +139,7 @@ def verify_english_rules(browser):
     page.get_by_role("button", name="feet", exact=True).tap()
     expect(page.locator("#word")).to_have_text("foot")
     expect(label).to_contain_text("noun, plural")
+    expect(page.locator("#grammarSource")).to_have_text("Local rules")
     assert page.locator(".translationHeading").locator("button").all_text_contents() == ["🔊", "Sentence", "Rules", "×"]
     assert page.locator(".translationHeading strong").count() == 0
     assert page.locator("#word").evaluate("e=>getComputedStyle(e).fontWeight") in ("700", "bold")
@@ -151,6 +154,7 @@ def verify_english_rules(browser):
     expect(page.locator("#popup")).to_be_visible()
     page.get_by_role("button", name="eaten", exact=True).tap()
     expect(label).to_contain_text("past participle, past perfect")
+    expect(page.locator("#grammarSource")).to_have_text("From book")
     rules.tap()
     expect(table.locator("[aria-current=true] td")).to_have_text("had eaten")
     dialog.locator("select").select_option("present simple")
@@ -175,20 +179,57 @@ def verify_english_rules(browser):
     page.get_by_role("button", name="avid", exact=True).tap()
     expect(page.locator("#meaning")).to_have_text("gloss")
     rules.tap()
+    expect(label).to_have_text("No local grammar")
+    expect(dialog.locator("#ruleNote")).to_contain_text("LLM fallback is off")
+    expect(dialog.locator("#retryRules")).to_be_hidden()
+    assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 0
+    dialog.locator("#closeRules").tap()
+    settings = page.get_by_role("button", name="Settings", exact=True)
+    settings.tap()
+    checkbox = page.get_by_role("checkbox", name="Fallback to LLM when grammar is missing")
+    expect(checkbox).to_be_hidden()
+    page.get_by_text("Experiments", exact=True).tap()
+    expect(checkbox).not_to_be_checked()
+    checkbox.check()
+    expect(page.locator("#settingsDialog")).to_be_visible()
+    assert page.locator("#settingsDialog").evaluate("d=>d.scrollHeight <= d.clientHeight+1")
+    page.evaluate("dispatchEvent(new Event('tool-back'))")
+    expect(page.locator("#settingsDialog")).to_be_hidden()
+    expect(settings).to_be_focused()
+    page.wait_for_function("!history.state?.languageSettings")
+    page.reload()
+    settings.tap()
+    page.get_by_text("Experiments", exact=True).tap()
+    expect(checkbox).to_be_checked()
+    page.keyboard.press("Escape")
+    page.get_by_role("button", name="avid", exact=True).tap()
+    rules.tap()
     page.wait_for_function("replies.length === 1")
     page.evaluate("""replies.shift()(JSON.stringify({lemma:'avid',pos:'adjective',form:'base form',
       note:'Avid describes the reader.'}))""")
     expect(dialog.locator("#ruleNote")).to_contain_text("describes the reader")
+    expect(page.locator("#grammarSource")).to_have_text("Luna")
     dialog.locator("#closeRules").tap()
-    page.locator("#close").tap()
+    settings.tap()
+    checkbox.uncheck()
+    page.locator("#closeSettings").tap()
+    page.wait_for_function("!history.state?.languageSettings")
+    page.reload()
     page.get_by_role("button", name="avid", exact=True).tap()
     expect(label).to_have_text("adjective, base form")
+    expect(page.locator("#grammarSource")).to_have_text("Saved grammar")
+    settings.tap()
+    page.get_by_text("Experiments", exact=True).tap()
+    expect(checkbox).not_to_be_checked()
+    page.go_back()
+    expect(page.locator("#settingsDialog")).to_be_hidden()
+    expect(page.locator("#reader")).to_be_visible()
     assert page.evaluate("replies.length") == 0
     page.close()
 
 
 def verify_live_english(browser):
-    page = open_reader(browser, """window.testSource='en';window.testTarget='ru';
+    page = open_reader(browser, """window.testSource='en';window.testTarget='ru';window.testFallback=true;
       window.fixture={name:'live.txt',text:'She saw a saw.'};""")
     answers = [
         {"translation": "увидела", "grammar": {"lemma": "see", "pos": "verb", "form": "past simple",
@@ -212,15 +253,71 @@ def verify_live_english(browser):
     saw.nth(0).tap()
     expect(page.locator("#grammarLabel")).to_contain_text("verb, past simple")
     assert page.evaluate("replies.length") == 0
-    assert page.evaluate("""
-      (()=>{const row={text:'My feet hurt.', words:[[0,2],[3,4],[8,4]]};
-        return generationPrompt(row,'ru').includes('grammar as a separate top-level array');
-      })()""")
     page.close()
 
 
-def verify_dialog_height(browser):
+def verify_translation_only(browser):
     page = open_reader(browser, """window.testSource='en';window.testTarget='ru';
+      window.fixture={name:'test.txt',text:'My feet hurt.'};""")
+    for word, lemma, gloss in [("feet", "foot", "ступни"), ("hurt", "hurt", "болят")]:
+        page.get_by_role("button", name=word, exact=True).tap()
+        page.wait_for_function("replies.length === 1")
+        prompt = page.evaluate("calls.filter(q=>q.method==='ai.run').at(-1).prompt")
+        assert "{translation,lemma}" in prompt and "grammar" not in prompt
+        page.evaluate("""([lemma,translation])=>replies.shift()(JSON.stringify({translation,lemma,
+          grammar:{lemma:'unexpected',pos:'noun',form:'singular',note:'Unrequested AI grammar.'}}))""", [lemma, gloss])
+        expect(page.locator("#meaning")).to_have_text(gloss)
+        expect(page.locator("#word")).to_have_text(lemma)
+        if word == "feet":
+            expect(page.locator("#grammarSource")).to_have_text("Local rules")
+        else:
+            expect(page.locator("#grammarLabel")).to_have_text("No local grammar")
+            page.locator("#rules").tap()
+            expect(page.locator("#retryRules")).to_be_hidden()
+    assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 2
+    page.close()
+
+
+def verify_shelf_settings(browser):
+    page = open_reader(browser, PACK)
+    page.evaluate("dispatchEvent(new Event('tool-back'))")
+    expect(page.locator("#shelf")).to_be_visible()
+    settings = page.get_by_role("button", name="Settings", exact=True)
+    settings.tap()
+    page.get_by_text("Experiments", exact=True).tap()
+    expect(page.get_by_role("checkbox")).to_be_visible()
+    page.get_by_text("Experiments", exact=True).tap()
+    expect(page.get_by_role("checkbox")).to_be_hidden()
+    page.locator("#closeSettings").tap()
+    expect(settings).to_be_focused()
+    expect(page.locator("#shelf")).to_be_visible()
+    page.close()
+
+
+def verify_page_preparation(browser):
+    for enabled in (False, True):
+        fixture = """
+        window.fixture={format:'reader.book.1',book:'prep',lang:'en',title:'Grammar',pages:1};
+        window.testRows=[{id:1,para:0,text:'Feet.',words:[[0,4]]}];
+        """
+        page = open_reader(browser, fixture + ("window.testFallback=true;" if enabled else ""))
+        page.evaluate("document.getElementById('prepare').click()")
+        page.wait_for_function("replies.length === 1")
+        prompt = page.evaluate("calls.filter(q=>q.method==='ai.run').at(-1).prompt")
+        assert ("grammar as a separate top-level array" in prompt) == enabled
+        page.evaluate("""replies.shift()(JSON.stringify({translation:'Ступни.',groups:[[[0],'foot','ступни']]}))""")
+        if enabled:
+            page.wait_for_function("replies.length === 1")
+            page.evaluate("""replies.shift()(JSON.stringify([{lemma:'foot',pos:'noun',form:'plural',note:'Plural of foot.'}]))""")
+        page.wait_for_function("calls.some(q=>q.method==='book.save')")
+        entry = page.evaluate("calls.find(q=>q.method==='book.save').entry")
+        assert ("grammar" in entry) == enabled
+        assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == (2 if enabled else 1)
+        page.close()
+
+
+def verify_dialog_height(browser):
+    page = open_reader(browser, """window.testSource='en';window.testTarget='ru';window.testFallback=true;
       window.fixture={name:'test.txt',text:'She had already eaten.'};""")
     dialog = page.locator("#grammarDialog")
     page.get_by_role("button", name="eaten", exact=True).tap()
@@ -279,6 +376,9 @@ if __name__ == "__main__":
             verify_pending(browser)
             verify_english_rules(browser)
             verify_live_english(browser)
+            verify_translation_only(browser)
+            verify_shelf_settings(browser)
+            verify_page_preparation(browser)
             verify_dialog_height(browser)
         finally:
             browser.close()
@@ -288,5 +388,6 @@ if __name__ == "__main__":
                                             args=["--blink-settings=forceZeroLayoutHeight=true"])
         try:
             verify_dialog_height(legacy)
+            verify_english_rules(legacy)
         finally:
             legacy.close()

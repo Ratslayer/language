@@ -1,6 +1,10 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: #f8f6ef; color: #232b23; font: 16px/1.5 system-ui,sans-serif; }
 main, .readingColumn { max-width: 46rem; margin: auto; padding: 1.5rem clamp(1rem,4vw,3rem) 5rem; }
+main { position:relative; }
+#openSettings { position:absolute; z-index:1; inset-block-start:1.5rem; inset-inline-end:clamp(1rem,4vw,3rem);
+  display:grid; place-items:center; width:44px; height:44px; padding:0; font:1.65rem/1 system-ui,sans-serif; }
+.shelfHeading, #fileTools header, .readingTitle { padding-inline-end:3.35rem; }
 header, nav, .languages { display: flex; flex-wrap: wrap; gap: .9rem; align-items: center; }
 header, nav { justify-content: space-between; }
 h1, h2, article { font-family: Georgia,serif; }
@@ -108,12 +112,18 @@ dialog:modal { position:fixed; inset:0; height:fit-content; max-height:100%; mar
 #meaning, #wordDetails { display:block; }
 #wordDetails { white-space:normal; }
 #grammarLabel { color:#4b5d4d; }
-#grammarDialog { width:min(26rem,calc(100% - 2rem)); overflow-wrap:anywhere;
+.readerDialog { width:min(26rem,calc(100% - 2rem)); overflow-wrap:anywhere;
   color:#232b23; background:#fffef9; border:1px solid #81917e; border-radius:.7rem; padding:1rem 1.2rem; }
-#grammarDialog::backdrop { background:#17231bc0; }
-#grammarDialog header { flex-wrap:nowrap; align-items:start; }
-#grammarTitle { margin:0; overflow-wrap:anywhere; }
-#closeRules { flex:none; min-width:44px; min-height:44px; }
+.readerDialog::backdrop { background:#17231bc0; }
+.readerDialog header { flex-wrap:nowrap; align-items:start; }
+.readerDialog h2 { margin:0; overflow-wrap:anywhere; }
+.readerDialog header button { flex:none; min-width:44px; min-height:44px; }
+#experiments { margin-top:.75rem; border-top:1px solid #d6dccf; }
+#experiments summary { padding-block:.65rem; cursor:pointer; font-weight:600; }
+#experiments label { display:flex; align-items:center; gap:.6rem; min-height:44px; font-size:1rem; cursor:pointer; }
+#grammarFallback { flex:none; width:1.1rem; height:1.1rem; accent-color:#28553d; }
+#grammarSource { color:#4b5d4d; white-space:nowrap; }
+#grammarSource:not(:empty)::before { content:'· '; }
 #ruleLabel { margin:0; font-style:italic; color:#4b5d4d; }
 #ruleLabel:empty { display:none; }
 #ruleNote { margin:.6rem 0; }
