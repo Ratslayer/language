@@ -41,13 +41,16 @@ test('atomic translation merge, sentence validation, and repeated chapter titles
 test('legacy catalogue and local translations reopen offline after moving the files',async()=>{
   const SQL=await init(),files=new MemoryFiles(),store=new ReaderStore(SQL,files);
   const {book}=await store.fromText('Test','en','One.');
-  await store.save(book,'en',1,entry('one'));
+  await store.save(book,'fr',1,entry('un'));
   const row={id:'first',bookId:book,title:'Test',pages:1,languages:{},source:{}};
   await files.write('legacy-catalogue.json',new TextEncoder().encode(JSON.stringify({source:'index',books:JSON.stringify([row]),'active:index:first':book})));
   const catalogue=new BookCatalogue(store,files);
   await catalogue.init();
   files.download=async()=>{throw new Error('offline');};
-  assert.equal((await catalogue.shelf()).books[0].ready,1);
+  const [card]=(await catalogue.shelf(undefined,'fr')).books;
+  assert.equal(card.ready,1);
+  assert.equal(card.sourceLanguage,'en');
+  assert.deepEqual(card.translations,['fr']);
   assert.equal((await catalogue.open('first')).book,book);
   const restarted=new BookCatalogue(new ReaderStore(SQL,files),files);
   await restarted.init();
@@ -75,13 +78,14 @@ test('illustrations stay with their caption across import and reopen',async()=>{
 test('shelf counts and downloads use the selected language',async()=>{
   const SQL=await init(),files=new MemoryFiles(),store=new ReaderStore(SQL,files);
   const {book}=await store.fromText('Painting','en','Paint.');
-  const item={id:'painting',bookId:book,title:'Painting',pages:1,source:{},languages:{ru:{readyPages:[0]},en:{readyPages:[]}}};
+  const item={id:'painting',bookId:book,title:'Painting',pages:1,sourceLanguage:'en',source:{},languages:{ru:{readyPages:[0]},en:{readyPages:[]}}};
   await files.write('catalogue.json',new TextEncoder().encode(JSON.stringify({source:'index',books:[item],checkpoints:{}})));
   const catalogue=new BookCatalogue(store,files);
   await catalogue.init();
   // The first paint of a cached shelf does not depend on opening local databases.
   const preview=catalogue.listedShelf('ru');
-  assert.deepEqual(preview,{connected:true,books:[{id:'painting',title:'Painting',author:undefined,pages:1,ready:1}]});
+  assert.deepEqual(preview,{connected:true,books:[{id:'painting',title:'Painting',author:undefined,pages:1,ready:1,
+    sourceLanguage:'en',translations:['ru']}]});
   assert.equal(catalogue.listedShelf('en').books[0].ready,0);
   assert.equal((await catalogue.shelf(undefined,'ru')).books[0].ready,1);
   assert.equal((await catalogue.shelf(undefined,'en')).books[0].ready,0);
@@ -92,6 +96,10 @@ test('shelf counts and downloads use the selected language',async()=>{
   assert.deepEqual(installs,[]);
   await catalogue.update('painting','ru',cached,()=>{});
   assert.deepEqual(installs,['','ru']);
+  installs.length=0;
+  const updated=await catalogue.update('painting','en',cached,()=>assert.fail('same-language translation update'));
+  await catalogue.update('painting','en-US',updated,()=>assert.fail('same-language translation update'));
+  assert.deepEqual(installs,['','']);
 });
 test('cached pages remain readable during delayed refresh and translation download, and a failed update is retryable',async()=>{
   const SQL=await init(),files=new MemoryFiles(),store=new ReaderStore(SQL,files);

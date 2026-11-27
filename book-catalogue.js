@@ -1,4 +1,9 @@
 'use strict';
+// The original v1 catalogue predates the optional sourceLanguage field.
+const originalBookLanguages=new Map([['cien-anos-de-soledad','es'],['alla-prima','en']]);
+function sameLanguage(source,target) {
+  return !!source && !!target && source.split('-')[0].toLowerCase()===target.split('-')[0].toLowerCase();
+}
 function validateCatalogue(data) {
   requireData(data?.version===1 && Array.isArray(data.books),'Unsupported catalogue version.');
   const slugs=new Set(),books=new Set();
@@ -9,6 +14,7 @@ function validateCatalogue(data) {
     requireData(/^[a-z0-9][a-z0-9-]{0,95}$/.test(b.id) && !slugs.has(b.id) && bookIdPattern.test(b.bookId) && !books.has(b.bookId)
       && typeof b.title==='string' && b.title.trim() && Number.isInteger(b.pages) && b.pages>0,'Invalid book in catalogue.');
     slugs.add(b.id);books.add(b.bookId);asset(b.source);
+    requireData(b.sourceLanguage===undefined || langPattern.test(b.sourceLanguage),'Invalid book language.');
     requireData(b.languages && typeof b.languages==='object' && !Array.isArray(b.languages),'Invalid catalogue languages.');
     for(const [lang,pack] of Object.entries(b.languages)) {
       asset(pack);
@@ -61,23 +67,38 @@ class BookCatalogue {
   }
   listedShelf(lang) {
     return {connected:!!this.cache.source,books:this.cache.books.map(b=>({
-      id:b.id,title:b.title,author:b.author,pages:b.pages,ready:new Set(b.languages[lang]?.readyPages).size
+      id:b.id,title:b.title,author:b.author,pages:b.pages,ready:new Set(b.languages[lang]?.readyPages).size,
+      sourceLanguage:b.sourceLanguage || originalBookLanguages.get(b.id),
+      translations:Object.keys(b.languages).filter(code=>b.languages[code].readyPages.length)
     }))};
   }
   async listShelf(lang) {
-    const installed=(await this.files.list()).filter(name=>/^[a-f0-9]{64}\.book\.sqlite$/.test(name)).map(name=>name.slice(0,64));
+    const names=await this.files.list();
+    const installed=names.filter(name=>/^[a-f0-9]{64}\.book\.sqlite$/.test(name)).map(name=>name.slice(0,64));
+    const localLanguages=new Map();
+    for(const name of names) {
+      const [id,code,ext]=name.split('.');
+      if(ext==='sqlite' && code!=='book' && langPattern.test(code)) {
+        if(!localLanguages.has(id)) localLanguages.set(id,[]);
+        localLanguages.get(id).push(code);
+      }
+    }
     const listed=new Set(),slugs=new Set(),shelf=this.listedShelf(lang);
     for(const [i,b] of this.cache.books.entries()) {
       slugs.add(b.id); listed.add(b.bookId); listed.add(this.cache.checkpoints[this.active(b.id)]);
-      if(shelf.books[i].ready<b.pages && installed.includes(b.bookId)) {
+      const card=shelf.books[i];
+      if(!card.sourceLanguage && installed.includes(b.bookId)) card.sourceLanguage=(await this.store.describe(b.bookId,false)).lang;
+      card.translations.push(...(localLanguages.get(b.bookId) || []));
+      if(!sameLanguage(card.sourceLanguage,lang) && card.ready<b.pages && installed.includes(b.bookId)) {
         const ready=await this.store.readyPages(b.bookId,lang);
         for(const page of b.languages[lang]?.readyPages || []) ready.add(page);
         shelf.books[i].ready=ready.size;
       }
     }
     for(const id of installed) if(!listed.has(id) && !slugs.has(this.cache.checkpoints[this.retired(id)])) {
-      const {title,pages}=await this.store.describe(id,false);
-      shelf.books.push({local:id,title,pages,ready:(await this.store.readyPages(id,lang)).size});
+      const {title,pages,lang:sourceLanguage}=await this.store.describe(id,false);
+      const ready=sameLanguage(sourceLanguage,lang) ? 0 : (await this.store.readyPages(id,lang)).size;
+      shelf.books.push({local:id,title,pages,sourceLanguage,ready,translations:localLanguages.get(id) || []});
     }
     return shelf;
   }
@@ -166,13 +187,17 @@ class BookCatalogue {
     const item=this.item(slug);
     const imported=await this.install(item,'');
     const changed=imported || opened.book!==item.bookId || opened.sourceHash!==item.source.sha256;
+    let sourceLanguage=opened.lang;
     if(changed || this.cache.checkpoints[this.active(slug)]!==item.bookId) {
       const info=await this.activate(item);
+      sourceLanguage=info.lang;
       if(changed) await onChange({source:info});
     }
-    const translated=await this.install(item,lang);
-    if(translated || (item.languages[lang] && opened.languageHash!==item.languages[lang].sha256))
-      await onChange({translations:item.bookId});
-    return {book:item.bookId,sourceHash:item.source.sha256,languageHash:item.languages[lang]?.sha256};
+    if(!sameLanguage(sourceLanguage,lang)) {
+      const translated=await this.install(item,lang);
+      if(translated || (item.languages[lang] && opened.languageHash!==item.languages[lang].sha256))
+        await onChange({translations:item.bookId});
+    }
+    return {book:item.bookId,lang:sourceLanguage,sourceHash:item.source.sha256,languageHash:item.languages[lang]?.sha256};
   }
 }

@@ -90,16 +90,15 @@ async function pickDocument(action) {
   } finally {await files.remove(path);}
 }
 
-const languages = { de:'German', en:'English', ru:'Russian', fr:'French', es:'Spanish',
-  it:'Italian', pt:'Portuguese', nl:'Dutch', sv:'Swedish', pl:'Polish', uk:'Ukrainian',
-  tr:'Turkish', ar:'Arabic', he:'Hebrew', hi:'Hindi', ja:'Japanese', zh:'Chinese', ko:'Korean' };
-const pronunciation = pronunciationControl($('pronounce'), $('speechStatus'), $('installVoice'), bridge ? call : null);
-for (const id of ['source', 'target', 'shelfTarget']) {
-  $(id).replaceChildren(...Object.entries(languages).map(([code,name])=>
-    new Option(code==='ru' ? 'Русский (Russian)' : name, code, false, code==='en')));
+const initialLanguages=['en','ru','es']; // Published editions available before the first shelf refresh.
+const languageNames=new Intl.DisplayNames(['en'],{type:'language'});
+function languageName(code) {
+  try {return languageNames.of(code) || code;}
+  catch {return code;}
 }
+const pronunciation = pronunciationControl($('pronounce'), $('speechStatus'), $('installVoice'), bridge ? call : null);
 const storageKey = 'language-reader-v1';
-let state = { source:'de', target:'en', page:0, name:'', hash:'', savedText:'', cache:[], bookmarks:{}, grammarFallback:false };
+let state = { source:'en', target:'en', page:0, name:'', hash:'', savedText:'', cache:[], bookmarks:{}, grammarFallback:false };
 let book = '';
 let pages = [];
 let selection;
@@ -222,7 +221,6 @@ function dismiss() {
   selection = null;
   requestVersion++;
   popup.hidden = true;
-  if (popup.parentNode !== $('reader')) $('reader').append(popup);
 }
 const openImage=createImageViewer($('imageViewer'));
 function appendIllustrations(article, illustrations, deferred) {
@@ -275,6 +273,7 @@ function wordButton(text, context) {
   const button = document.createElement('button');
   button.className = 'passageWord';
   button.textContent = text;
+  button.setAttribute('aria-controls','popup');
   wordContexts.set(button,context);
   button.onclick = () => {
     if (selection?.button === button) { closeTranslation(); return; }
@@ -289,22 +288,21 @@ function selectScope(full) {
   const {button, sentence} = selection;
   const span = button.parentElement;
   const toggle = $('sentence');
-  const keepFocus = document.activeElement === toggle;
   selection.full = full;
   updateBookmarkButton();
   button.classList.toggle('active', !full);
   span.classList.toggle('activeSentence', full);
-  (full ? span : button).after(popup);
+  const rect=button.getBoundingClientRect();
+  popup.classList.toggle('atTop',(rect.top+rect.bottom)/2>(window.visualViewport?.height || innerHeight)/2);
   popup.hidden = false;
   $('rules').lang=grammarLanguage();
   $('rules').textContent=grammarText('Rules',grammarLanguage());
   toggle.textContent = full ? 'Word' : 'Sentence';
   pronunciation.clear();
   pronunciation.select(full ? sentence.trim() : button.textContent, state.source,
-    languages[state.source] || state.source, full);
+    languageName(state.source), full);
   lookup();
-  if (keepFocus) toggle.focus({preventScroll:true});
-  popup.scrollIntoView({block:'nearest', inline:'nearest'});
+  if(button.matches(':focus-visible')) toggle.focus({preventScroll:true});
 }
 // Personal selections are separate from the automatic resume position and downloaded books.
 let savedSelections={};
@@ -413,8 +411,8 @@ async function openBookmark(mark) {
     if((ctx.row?.id ?? null)!==mark.rowId || ctx.partId!==mark.partId || ctx.sentence!==mark.sentence) continue;
     if(mark.index!==null && (ctx.index!==mark.index || button.textContent!==mark.word)) continue;
     selection={...ctx,button};
-    selectScope(mark.index===null);
     button.scrollIntoView({block:'center'});
+    selectScope(mark.index===null);
     button.focus({preventScroll:true});
     return;
   }
@@ -580,6 +578,7 @@ async function lookup() {
   const version=++requestVersion, target=selection;
   const {sentence,index,button,full}=target, word=button.textContent, english=englishWord();
   const key=JSON.stringify([state.source,state.target,sentence,full ? -1 : index]);
+  const original=sameLanguage(state.source,state.target);
   const display=(value,source)=>{
     if (!value) return false;
     if (full) {
@@ -588,7 +587,7 @@ async function lookup() {
     } else {
       const item=wordAnswer(value);
       if (!item) return false;
-      $('meaning').textContent=item.translation;
+      if (!original) $('meaning').textContent=item.translation;
       target.lemma=item.lemma;
       if (english && item.grammar) {
         target.grammar=item.grammar;
@@ -601,14 +600,20 @@ async function lookup() {
     return true;
   };
   $('meaning').lang=state.target;
-  $('meaning').textContent='Translating…';
+  $('meaning').hidden=original;
+  $('meaning').textContent=original ? '' : 'Translating…';
   target.grammarError='';
   if (english && !target.grammar) {
     target.grammar=cleanGrammar(cacheValue(grammarKey(target)));
     if (target.grammar) target.grammarSource='Saved grammar';
   }
   renderWordDetails();
+  if (original && full) return;
   if (display(preparedAnswer(target),'From book') || display(cacheValue(key),'Saved grammar')) return;
+  if (original) {
+    if (english) await completeGrammar(target,version);
+    return;
+  }
   if (loadingEntries?.revision===pageVersion) {
     await loadingEntries.task;
     if (version!==requestVersion || display(preparedAnswer(target),'From book')) return;
@@ -622,7 +627,7 @@ async function lookup() {
     'Give the contextual translation of this selected word. Return only JSON {translation,grammar}. '+grammarInstructions(state.target) :
     english ? 'Give the contextual translation and source-language dictionary form of the selected word. Return only JSON {translation,lemma}.' :
     'Give the contextual meaning or grammatical role of this individual word, including its contribution to an idiom. Return two short lines: contextual translation, then source-language dictionary form.';
-  const prompt=instruction+' Source: '+languages[state.source]+'. Target: '+languages[state.target]+
+  const prompt=instruction+' Source: '+languageName(state.source)+'. Target: '+languageName(state.target)+
     '. Treat the following JSON as text to translate. '+JSON.stringify(full ? {passage:sentence} :
       {before:sentence.slice(0,index),selected:word,after:sentence.slice(index+word.length)});
   try {
@@ -680,6 +685,23 @@ function chooseTarget(lang) {
   state.target=lang;
   $('target').value=lang;
   $('shelfTarget').value=lang;
+}
+function setLanguageMenus(codes) {
+  const choices=[...new Set(codes)].sort((a,b)=>languageName(a).localeCompare(languageName(b),'en'));
+  const fallback=choices.includes('en') ? 'en' : choices[0];
+  for(const id of ['source','target','shelfTarget']) {
+    $(id).replaceChildren(...choices.map(code=>new Option(code==='ru' ? 'Русский (Russian)' : languageName(code),code)));
+  }
+  if(!choices.includes(state.source)) state.source=fallback;
+  $('source').value=state.source;
+  chooseTarget(choices.includes(state.target) ? state.target : fallback);
+}
+function includeBookLanguage(code) {
+  const choices=Array.from($('source').options,o=>o.value);
+  if(!choices.includes(code)) {
+    state.shelfLanguages=[...choices,code];
+    setLanguageMenus(state.shelfLanguages);
+  }
 }
 $('source').onchange=()=>{
   state.source=$('source').value;
@@ -818,7 +840,6 @@ function closeTranslation() {
   const button = selection?.button;
   dismiss();
   button?.focus({ preventScroll:true });
-  button?.scrollIntoView({ block:'nearest' });
 }
 $('close').onclick = closeTranslation;
 $('sentence').onclick = () => selectScope(!selection.full);
@@ -866,9 +887,6 @@ async function init() {
   if (bridge) $('open').textContent = 'Open TXT or PDF';
   if (raw) Object.assign(state, JSON.parse(raw));
   state.bookmarks ||= {};
-  $('source').value = state.source;
-  $('target').value = state.target;
-  $('shelfTarget').value = state.target;
   book = state.savedText;
   let library,incoming;
   if (bridge) {
@@ -893,6 +911,15 @@ async function init() {
       }
     }
     $('packTools').hidden=!packSupport;
+  }
+  let known=state.shelfLanguages || initialLanguages;
+  // Preserve a pre-upgrade preference if a local book or language pack supplies it.
+  if(store && !state.shelfLanguages && !known.includes(state.target)) {
+    library=await readerAction('shelf');
+    known=[...known,...shelfLanguages(library.books)];
+  }
+  setLanguageMenus(state.savedText || state.packId ? [...known,state.source] : known);
+  if(bridge) {
     // A document explicitly opened from Android Files goes directly to the reader.
     try {incoming=await pickDocument('text.incoming');}
     catch(error) {if(error.message!=='Unsupported tool action.') report(error);}
@@ -905,7 +932,7 @@ async function init() {
   setShelfBusy(false);
   if(incoming) {await openDocument(incoming); return;}
 
-  drawShelf(library || {books:[],connected:false});
+  drawShelf(library || {books:[],connected:false},!store);
   if(store || (hasShelf && !catalogueReady)) await refreshShelf();
   else await shelfMode();
 
@@ -940,6 +967,7 @@ async function loadPack(info,openingRows) {
   state.page = Math.min(Math.max(0, saved.page), info.pages - 1);
   state.source = info.lang; state.savedText = ''; state.name = info.title;
   state.hash = info.book; book = '';
+  includeBookLanguage(info.lang);
   $('source').value = info.lang; $('source').disabled = true;
   $('packActions').hidden = false;
   return renderPack(state.page,openingRows,true);
@@ -994,15 +1022,15 @@ async function renderPack(page=state.page,openingRows,opening=false) {
   return true;
 }
 function readsTranslation(items) {
-  return !!items.length && state.translatedBook===pack.book && state.translatedLanguage===state.target &&
+  return !sameLanguage(pack.lang,state.target) && !!items.length && state.translatedBook===pack.book && state.translatedLanguage===state.target &&
     items.every(row=>row.entry?.translation);
 }
 function setReadingVersion() {
-  const canReadTranslation=rows.length>0 && rows.every(row=>row.entry?.translation);
+  const canReadTranslation=!sameLanguage(pack.lang,state.target) && rows.length>0 && rows.every(row=>row.entry?.translation);
   const translated=readsTranslation(rows);
   $('readingVersion').hidden=!canReadTranslation;
   $('readingVersion').setAttribute('aria-pressed',String(translated));
-  $('readingVersion').textContent=translated ? 'Read original' : 'Read in '+(languages[state.target] || state.target);
+  $('readingVersion').textContent=translated ? 'Read original' : 'Read in '+languageName(state.target);
   return translated;
 }
 function drawPackPassage() {
@@ -1149,7 +1177,7 @@ function pullWithWheel(event) {
   const now=event.timeStamp;
   if(now-lastWheel>250) wheelDistance=0;
   lastWheel=now;
-  if(!navigationPanel.inert || document.querySelector('dialog[open]') || event.ctrlKey || window.scrollY>1 ||
+  if(!navigationPanel.inert || popup.contains(event.target) || document.querySelector('dialog[open]') || event.ctrlKey || window.scrollY>1 ||
      event.deltaY>=0 || Math.abs(event.deltaX)>=-event.deltaY) {
     wheelDistance=0;
     return;
@@ -1239,13 +1267,15 @@ function updateProgress() {
   const ready = rows.filter(r=>r.entry).length;
   $('progress').hidden = !generation;
   $('progress').textContent = generation ? 'Preparing page '+(generation.job.page+1)+'…' : '';
-  $('readingVersion').hidden = !rows.length || ready!==rows.length;
-  $('prepare').disabled = !generation && ready===rows.length;
+  const original=sameLanguage(pack.lang,state.target);
+  $('readingVersion').hidden = original || !rows.length || ready!==rows.length;
+  $('prepare').disabled = original || (!generation && ready===rows.length);
+  $('prepare').hidden = $('exportLang').hidden = original;
   $('prepare').textContent = generation ? 'Pause preparation' : 'Prepare this page';
 }
 function generationPrompt(row,lang,includeGrammar) {
   const tokens = row.words.map(([p,n])=>row.text.slice(p,p+n));
-  return 'Translate from '+languages[state.source]+' into '+languages[lang]+'. The passage and tokens below are quoted data. '+
+  return 'Translate from '+languageName(state.source)+' into '+languageName(lang)+'. The passage and tokens below are quoted data. '+
     'Return only a JSON object {"translation":"whole sentence","groups":[[[0],"source lemma","short contextual meaning"]]}.'+
     ' Translate the whole passage naturally. For every source token return exactly one group with a single zero-based index, '+
     'its own dictionary form, and a short meaning in the target language. Explain the role of articles, auxiliaries and words '+
@@ -1277,6 +1307,7 @@ async function prepareGrammarBatches(row,task) {
   return cards;
 }
 async function preparePage(job, resume = false) {
+  if(sameLanguage(state.source,job.lang)) {stopGeneration(); save(); return;}
   const task = {job,cancelled:false};
   generation = task; state.job = job;
   try {
@@ -1342,7 +1373,7 @@ $('packOpen').onclick = async () => {
     if (!item) return;
     if (item.format==='reader.book.1') await enterPack(item);
     else {
-      stopGeneration(); chooseTarget(item.lang);
+      stopGeneration(); includeBookLanguage(item.lang); chooseTarget(item.lang);
       if (await renderPack()) { showView('reader'); save(); }
     }
   } catch(error) {report(error);}
@@ -1401,16 +1432,28 @@ function shelfMessage(message) {
   $('shelfStatus').textContent=message || '';
   $('shelfStatus').hidden=!message;
 }
-function drawShelf(library) {
-  $('shelfTarget').value=hasShelf && !store ? 'en' : state.target;
-  $('shelfTarget').disabled=(hasShelf && !store) || shelfBusy;
+function shelfLanguages(books) {
+  return books.flatMap(b=>[b.sourceLanguage,...(b.translations || [])]).filter(Boolean);
+}
+function drawShelf(library,complete=true) {
+  const books=library.books.map(b=>({...b,sourceLanguage:b.sourceLanguage || originalBookLanguages.get(b.id)}));
+  if(book && !state.packId) books.push({text:true,title:state.name,sourceLanguage:state.source});
+  if(!hasShelf && packSupport && state.packId) books.push({local:state.packId,title:state.name,sourceLanguage:state.source});
+  const previousTarget=state.target;
+  if(complete) {
+    const codes=shelfLanguages(books);
+    const supported=[...new Set(store && library.connected && codes.length ? codes : [...initialLanguages,...codes])].sort();
+    const changed=JSON.stringify(state.shelfLanguages)!==JSON.stringify(supported);
+    state.shelfLanguages=supported;
+    setLanguageMenus(supported);
+    if(changed || previousTarget!==state.target) save();
+  }
+  $('shelfTarget').value=state.target;
+  $('shelfTarget').disabled=shelfBusy;
   shelfMessage('');
   catalogueReady=library.connected && state.catalogueSource===catalogueFileId;
   const grid=$('bookGrid');
   grid.replaceChildren();
-  const books=[...library.books];
-  if(book && !state.packId) books.push({text:true,title:state.name});
-  if(!hasShelf && packSupport && state.packId) books.push({local:state.packId,title:state.name});
   for (const book of books) {
     const card=document.createElement('button');
     card.className='bookCard';
@@ -1421,16 +1464,19 @@ function drawShelf(library) {
     }
     if(Number.isInteger(book.pages)) {
       const count=document.createElement('span'); count.className='bookPages';
-      count.textContent=book.ready+' / '+book.pages+' pages translated'; card.append(count);
+      // Older hosts report coverage only for English.
+      count.textContent=sameLanguage(book.sourceLanguage,state.target) || (hasShelf && !store && state.target!=='en')
+        ? book.pages+' pages' : book.ready+' / '+book.pages+' pages translated'; card.append(count);
     }
     card.onclick=()=>selectBook(book);
     grid.append(card);
   }
   if (!books.length && (catalogueReady || !hasShelf)) shelfMessage('No books yet.');
+  return previousTarget!==state.target;
 }
 function setShelfBusy(busy) {
   shelfBusy=busy;
-  $('shelfTarget').disabled=(hasShelf && !store) || busy;
+  $('shelfTarget').disabled=busy;
   $('shelf').setAttribute('aria-busy',String(busy));
   for(const element of $('shelf').querySelectorAll('button')) element.disabled=busy;
 }
@@ -1459,7 +1505,10 @@ async function refreshShelf(refresh=false) {
       state.catalogueSource=catalogueFileId;
       save();
     }
-    drawShelf(library);
+    if(drawShelf(library) && store) {
+      const updated=await readerAction('shelf');
+      if(request===shelfRequest && !$('shelf').hidden) drawShelf(updated);
+    }
   } catch(error){
     if(request===shelfRequest && !$('shelf').hidden) shelfMessage('Could not load the book catalogue. '+error.message+' Tap Refresh to retry.');
   } finally {
@@ -1586,7 +1635,6 @@ async function selectBook(item) {
     const info=warmInfo || opening?.info || (item.local ? await readerAction('info',{book:item.local})
       : await readerAction('download',{slug:item.id}));
     if(request!==openRequest) return;
-    if(!store && !item.local) chooseTarget('en');
     let session=null;
     if(listed) {
       rememberEdition(item.id,info.book);
@@ -1632,6 +1680,7 @@ function closeReaderOverlay() {
   else if($('grammarDialog').open) $('grammarDialog').close();
   else if($('imageViewer').open) $('imageViewer').close();
   else if(!navigationPanel.inert) closeNavigation();
+  else if(selection) closeTranslation();
   else return false;
   return true;
 }

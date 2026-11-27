@@ -50,14 +50,58 @@ def spoken(page):
     page.locator("#pronounce").tap()
     return page.evaluate("calls.filter(q => q.method === 'speech.speak').at(-1).text")
 
+def passage_geometry(page):
+    return page.locator("#passage").evaluate("""article => [
+      scrollY, document.documentElement.scrollHeight, article.getBoundingClientRect().height,
+      ...Array.from(article.querySelectorAll('button'), b => {
+        const {x,y,width,height}=b.getBoundingClientRect(); return [x,y,width,height];
+      })
+    ]""")
+
+
+def verify_same_language(browser):
+    page = open_reader(browser, """
+      window.fixture={format:'reader.book.1',book:'regional',lang:'en-GB',title:'Original',pages:1};
+      window.testRows=Array.from({length:36},(_,id)=>({id,para:id,text:'Her feet hurt.',
+        words:[[0,3],[4,4],[9,4]],entry:{translation:'Old sentence gloss',
+          groups:[[[0],'her','old gloss'],[[1],'foot','old gloss'],[[2],'hurt','old gloss']]}}));
+    """)
+    word = page.get_by_role("button", name="feet", exact=True).nth(16)
+    word.evaluate("b => b.scrollIntoView({block:'center'})")
+    geometry = passage_geometry(page)
+    word.tap()
+    expect(page.locator("#popup")).to_be_in_viewport()
+    expect(page.locator("#meaning")).to_be_hidden()
+    expect(page.locator("#grammarLabel")).to_have_text("noun, plural")
+    expect(page.locator("#word")).to_have_text("foot")
+    assert spoken(page) == "feet"
+    assert passage_geometry(page) == geometry
+    page.locator("#rules").tap()
+    expect(page.locator("#grammarTable [aria-current=true] td")).to_have_text("feet")
+    page.locator("#closeRules").tap()
+    page.locator("#sentence").tap()
+    expect(page.locator("#meaning")).to_be_empty()
+    assert spoken(page) == "Her feet hurt."
+    page.locator("#markSelection").tap()
+    expect(page.locator("#markSelection")).to_have_attribute("aria-pressed","true")
+    assert passage_geometry(page) == geometry
+    page.evaluate("dispatchEvent(new Event('tool-back'))")
+    expect(page.locator("#popup")).to_be_hidden()
+    expect(page.locator("#readingVersion")).to_be_hidden()
+    assert passage_geometry(page) == geometry
+    assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 0
+    page.close()
+
 
 def verify_pack(browser):
     page = open_reader(browser, PACK)
     target = page.locator("#passage .passageWord").nth(2)
     toggle = page.locator("#sentence")
     answer = page.locator("#answer")
+    geometry = passage_geometry(page)
     target.tap()
     expect(answer).to_have_text("meaning 2\nlemma")
+    assert passage_geometry(page) == geometry
     assert spoken(page) == "sí"
     expect(page.locator("#rules")).to_be_hidden()
     toggle.tap()
@@ -65,6 +109,7 @@ def verify_pack(browser):
     expect(toggle).to_be_focused()
     expect(page.locator(".activeSentence")).to_have_text("Dijo «sí, sí».")
     expect(answer).to_have_text("He said “yes, yes”.")
+    assert passage_geometry(page) == geometry
     assert spoken(page) == "Dijo «sí, sí»."
     toggle.tap()
     expect(target).to_have_class("passageWord active")
@@ -165,6 +210,7 @@ def verify_pending(browser):
 
 def verify_english_rules(browser):
     fixture = """
+    window.testTarget='es';
     window.fixture={format:'reader.book.1',book:'grammar-test',lang:'en',title:'Grammar',pages:1};
     const examples=[
       ['Her feet hurt.', 'Feet', 'foot', null],
@@ -243,6 +289,7 @@ def verify_english_rules(browser):
     expect(rules).to_be_hidden()
     assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 0
     settings = page.get_by_role("button", name="Settings", exact=True)
+    page.locator("#close").tap()
     settings.tap()
     checkbox = page.get_by_role("checkbox", name="Fallback to LLM when grammar is missing")
     expect(checkbox).to_be_hidden()
@@ -270,6 +317,7 @@ def verify_english_rules(browser):
     expect(dialog.locator("#ruleNote")).to_contain_text("fictional adjective")
     expect(page.locator("#grammarSource")).to_have_text("Luna")
     dialog.locator("#closeRules").tap()
+    page.locator("#close").tap()
     settings.tap()
     checkbox.uncheck()
     page.locator("#closeSettings").tap()
@@ -278,6 +326,7 @@ def verify_english_rules(browser):
     page.get_by_role("button", name="flarnix", exact=True).tap()
     expect(label).to_have_text("adjective, base form")
     expect(page.locator("#grammarSource")).to_have_text("Saved grammar")
+    page.locator("#close").tap()
     settings.tap()
     page.get_by_text("Experiments", exact=True).tap()
     expect(checkbox).not_to_be_checked()
@@ -390,7 +439,7 @@ def verify_legacy_russian_note(browser):
     expect(note).to_have_text("Вымышленное имя.")
     assert page.evaluate("replies.length") == 0
     dialog.locator("#closeRules").tap()
-    page.evaluate("const t=document.getElementById('target'); t.value='fr'; t.dispatchEvent(new Event('change'))")
+    page.evaluate("const t=document.getElementById('target'); t.value='es'; t.dispatchEvent(new Event('change'))")
     word.tap()
     page.locator("#rules").tap()
     expect(note).to_have_text("A fictional name.")
@@ -403,6 +452,8 @@ def verify_shelf_settings(browser):
     page = open_reader(browser, PACK)
     page.evaluate("dispatchEvent(new Event('tool-back'))")
     expect(page.locator("#shelf")).to_be_visible()
+    for menu in ["shelfTarget", "source", "target"]:
+        assert page.locator("#"+menu+" option").evaluate_all("options=>options.map(o=>o.value).sort()") == ["en","es","ru"]
     settings = page.get_by_role("button", name="Settings", exact=True)
     settings.tap()
     page.get_by_text("Experiments", exact=True).tap()
@@ -504,6 +555,7 @@ if __name__ == "__main__":
         browser = playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH"))
         try:
             verify_pack(browser)
+            verify_same_language(browser)
             verify_bookmarks(browser)
             verify_pending(browser)
             verify_english_rules(browser)
@@ -522,6 +574,7 @@ if __name__ == "__main__":
                                             args=["--blink-settings=forceZeroLayoutHeight=true"])
         try:
             verify_dialog_height(legacy)
+            verify_same_language(legacy)
             verify_english_rules(legacy)
         finally:
             legacy.close()

@@ -12,7 +12,7 @@
   <button id="openSettings" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog" disabled><span aria-hidden="true">⚙&#xFE0E;</span></button>
   <section id="shelf" aria-labelledby="shelfTitle">
     <header class="shelfHeading"><h1 id="shelfTitle">Books</h1>
-      <label class="shelfLanguage">Translation language <select id="shelfTarget" disabled><option value="en">English</option></select></label>
+      <label class="shelfLanguage">I speak <select id="shelfTarget" disabled><option value="en">English</option></select></label>
     </header>
     <p id="shelfStatus" role="status">Loading books…</p>
     <div id="bookGrid" aria-label="Book catalogue"></div>
@@ -42,22 +42,22 @@
     <p id="progress" role="status" hidden></p>
     <p id="status" role="status"></p>
     <article id="passage" class="readingPassage" dir="auto" aria-label="Reading text"></article>
-    <span id="popup" role="region" lang="en" dir="ltr" aria-label="Translation" hidden>
-      <span class="translationHeading">
-        <button id="pronounce" type="button" aria-label="Pronounce word" title="Pronounce word" hidden>🔊</button>
-        <button id="markSelection" type="button" aria-label="Bookmark word" aria-pressed="false"><svg aria-hidden="true" width="18" height="22" viewBox="0 0 18 22"><path d="M3 2h12v17l-6-4-6 4z" stroke="currentColor" stroke-width="2"/></svg></button>
-        <button id="sentence" type="button">Sentence</button>
-        <button id="rules" type="button" aria-haspopup="dialog" hidden>Rules</button>
-        <button id="close" aria-label="Close translation">×</button>
-      </span>
-      <span id="speechStatus" role="status"></span>
-      <button id="installVoice" type="button" hidden></button>
-      <span id="answer" role="status"><span id="meaning" dir="auto"></span><span id="wordDetails" hidden>
-<strong id="word" dir="auto"></strong> <em id="grammarLabel" lang="en"></em> <small id="grammarSource"></small></span></span>
-    </span>
     <nav hidden><button id="prev">Previous</button><span id="count"></span><button id="next">Next</button></nav>
   </section>
 </main>
+<span id="popup" role="region" lang="en" dir="ltr" aria-label="Selection details" hidden>
+  <span class="translationHeading">
+    <button id="pronounce" type="button" aria-label="Pronounce word" title="Pronounce word" hidden>🔊</button>
+    <button id="markSelection" type="button" aria-label="Bookmark word" aria-pressed="false"><svg aria-hidden="true" width="18" height="22" viewBox="0 0 18 22"><path d="M3 2h12v17l-6-4-6 4z" stroke="currentColor" stroke-width="2"/></svg></button>
+    <button id="sentence" type="button">Sentence</button>
+    <button id="rules" type="button" aria-haspopup="dialog" hidden>Rules</button>
+    <button id="close" aria-label="Close selection details">×</button>
+  </span>
+  <span id="speechStatus" role="status"></span>
+  <button id="installVoice" type="button" hidden></button>
+  <span id="answer" role="status"><span id="meaning" dir="auto"></span><span id="wordDetails" hidden>
+<strong id="word" dir="auto"></strong> <em id="grammarLabel" lang="en"></em> <small id="grammarSource"></small></span></span>
+</span>
 <div id="pagePreview" inert aria-hidden="true" hidden><div class="readingColumn"></div></div>
 <section id="readerNavigation" aria-label="Reading controls" aria-keyshortcuts="Alt+ArrowDown" inert>
   <div class="navigationControls">
