@@ -29,7 +29,7 @@ function grammarDialog(dialog, lookupAgain, savedRussianNote) {
   async function update(selection,lang) {
     if (!dialog.open) return;
     const version=++revision;
-    const {grammar:card,button,grammarError,grammarMiss} = selection;
+    const {grammar:card,button,grammarError} = selection;
     const word=button.textContent;
     dialog.lang=lang;
     const ui=text=>grammarText(text,lang);
@@ -42,7 +42,7 @@ function grammarDialog(dialog, lookupAgain, savedRussianNote) {
     const useRussian=lang==='ru' && card;
     const note=useRussian ? card.noteRu || russianGrammarNote(card,word) : card?.note;
     const noteEl=el('ruleNote');
-    noteEl.textContent=note || ui(grammarMiss || grammarError || 'Checking grammar…');
+    noteEl.textContent=note || ui(grammarError || '');
     const legacyNote=useRussian && !card.noteRu && selection.grammarSource!=='Local rules' ? card.note : '';
     if (originalNote!==legacyNote) {
       originalNote=legacyNote;
@@ -54,7 +54,7 @@ function grammarDialog(dialog, lookupAgain, savedRussianNote) {
     if (translatedNote) translatedNote.then(text=>{
       if (text && version===revision && dialog.open) noteEl.textContent=text;
     });
-    el('retryRules').hidden=!grammarError || !!grammarMiss || !window.AiPages;
+    el('retryRules').hidden=!grammarError || !window.AiPages;
     const sameCard = current===card;
     current=card;
     const verb=card && ['verb','auxiliary','auxiliary verb'].includes(card.pos);
