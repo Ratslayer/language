@@ -59,6 +59,39 @@ def passage_geometry(page):
     ]""")
 
 
+def assert_under_word(word):
+    bounds = word.evaluate("""b => {
+      const anchor=b.getBoundingClientRect(), panel=document.getElementById('popup').getBoundingClientRect();
+      const center=anchor.left+anchor.width/2;
+      return [panel.top-anchor.bottom, panel.left, center, panel.right, document.documentElement.clientWidth];
+    }""")
+    gap, left, center, right, width = bounds
+    assert 0 <= gap <= 8 and 0 <= left <= center <= right <= width, bounds
+
+
+def verify_popup_anchor(browser):
+    page = open_reader(browser, PACK + """
+      window.testRows=Array.from({length:40},(_,id)=>({...window.testRows[0],id,para:id}));
+    """)
+    word = page.get_by_role("button", name="Dijo", exact=True).nth(20)
+    word.evaluate("b=>scrollBy(0,b.getBoundingClientRect().bottom-innerHeight+6)")
+    word.tap()
+    popup = page.locator("#popup")
+    assert_under_word(word)
+    expect(popup).to_be_in_viewport(ratio=0.99)
+    expect(word).to_be_in_viewport(ratio=0.99)
+    page.evaluate("scrollBy(0,104)")
+    assert_under_word(word)
+    page.locator("#sentence").tap()
+    assert_under_word(word)
+    page.set_viewport_size({"width": 900, "height": 640})
+    page.evaluate("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+    assert_under_word(word)
+    page.locator("#sentence").tap()
+    assert_under_word(word)
+    page.close()
+
+
 def verify_same_language(browser):
     page = open_reader(browser, """
       window.fixture={format:'reader.book.1',book:'regional',lang:'en-GB',title:'Original',pages:1};
@@ -71,6 +104,7 @@ def verify_same_language(browser):
     geometry = passage_geometry(page)
     word.tap()
     expect(page.locator("#popup")).to_be_in_viewport()
+    assert_under_word(word)
     expect(page.locator("#meaning")).to_be_hidden()
     expect(page.locator("#grammarLabel")).to_have_text("noun, plural")
     expect(page.locator("#word")).to_have_text("foot")
@@ -102,6 +136,7 @@ def verify_pack(browser):
     target.tap()
     expect(answer).to_have_text("meaning 2\nlemma")
     assert passage_geometry(page) == geometry
+    assert_under_word(target)
     assert spoken(page) == "sí"
     expect(page.locator("#rules")).to_be_hidden()
     toggle.tap()
@@ -110,6 +145,7 @@ def verify_pack(browser):
     expect(page.locator(".activeSentence")).to_have_text("Dijo «sí, sí».")
     expect(answer).to_have_text("He said “yes, yes”.")
     assert passage_geometry(page) == geometry
+    assert_under_word(target)
     assert spoken(page) == "Dijo «sí, sí»."
     toggle.tap()
     expect(target).to_have_class("passageWord active")
@@ -252,6 +288,7 @@ def verify_english_rules(browser):
     expect(dialog).to_be_hidden()
     expect(rules).to_be_focused()
     expect(page.locator("#popup")).to_be_visible()
+    page.locator("#close").tap()
     page.get_by_role("button", name="eaten", exact=True).tap()
     expect(label).to_contain_text("past participle, past perfect")
     expect(page.locator("#grammarSource")).to_have_text("")
@@ -266,6 +303,7 @@ def verify_english_rules(browser):
     expect(page.locator("#wordDetails")).to_be_hidden()
     page.locator("#sentence").tap()
     expect(rules).to_be_visible()
+    page.locator("#close").tap()
     for word, note in [("through", "preposition"), ("better", "adverb")]:
         page.get_by_role("button", name=word, exact=True).tap()
         rules.tap()
@@ -275,10 +313,12 @@ def verify_english_rules(browser):
         else:
             expect(table.locator("[aria-current=true] td")).to_have_text("better")
         dialog.locator("#closeRules").tap()
+        page.locator("#close").tap()
     assert page.evaluate("replies.length") == 0
     page.get_by_role("button", name="avid", exact=True).tap()
     expect(label).to_have_text("adjective, base form")
     expect(page.locator("#grammarSource")).to_have_text("")
+    page.locator("#close").tap()
     page.get_by_role("button", name="zandor", exact=True).tap()
     expect(page.locator("#grammarSource")).to_have_text("From book")
     page.get_by_role("button", name="flarnix", exact=True).tap()
@@ -555,6 +595,7 @@ if __name__ == "__main__":
         browser = playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH"))
         try:
             verify_pack(browser)
+            verify_popup_anchor(browser)
             verify_same_language(browser)
             verify_bookmarks(browser)
             verify_pending(browser)
@@ -575,6 +616,7 @@ if __name__ == "__main__":
         try:
             verify_dialog_height(legacy)
             verify_same_language(legacy)
+            verify_popup_anchor(legacy)
             verify_english_rules(legacy)
         finally:
             legacy.close()
