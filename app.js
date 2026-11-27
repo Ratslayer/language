@@ -99,7 +99,7 @@ for (const id of ['source', 'target', 'shelfTarget']) {
     new Option(code==='ru' ? 'Русский (Russian)' : name, code, false, code==='en')));
 }
 const storageKey = 'language-reader-v1';
-let state = { source:'de', target:'en', page:0, name:'', hash:'', savedText:'', cache:[], bookmarks:{} };
+let state = { source:'de', target:'en', page:0, name:'', hash:'', savedText:'', cache:[], bookmarks:{}, grammarFallback:false };
 let book = '';
 let pages = [];
 let selection;
@@ -321,15 +321,15 @@ function parseModelObject(raw) {
   try { return JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'')); }
   catch { return null; }
 }
-function wordAnswer(raw) {
+function wordAnswer(raw, includeGrammar=true) {
   if (typeof raw==='object' && raw && typeof raw.translation==='string' && raw.translation.trim()) {
-    const grammar=cleanGrammar(raw.grammar);
+    const grammar=includeGrammar ? cleanGrammar(raw.grammar) : null;
     return {translation:raw.translation.trim(),lemma:grammar?.lemma || (typeof raw.lemma==='string' ? raw.lemma : ''),grammar};
   }
   if (typeof raw!=='string' || !raw.trim()) return null;
   if (/^[{`]/.test(raw.trim())) {
     const parsed=parseModelObject(raw);
-    return parsed && typeof parsed==='object' ? wordAnswer(parsed) : null;
+    return parsed && typeof parsed==='object' ? wordAnswer(parsed,includeGrammar) : null;
   }
   const lines=raw.trim().split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
   const lemma=lines.length>1 ? lines.pop() : '';
@@ -339,7 +339,7 @@ function renderWordDetails() {
   if (!selection || selection.full) {
     $('wordDetails').hidden=true; $('word').textContent=''; $('grammarLabel').textContent=''; return;
   }
-  const {grammar,lemma,button,grammarError}=selection;
+  const {grammar,lemma,button,grammarError,grammarMiss}=selection;
   const english=englishWord();
   const base=(english && grammar?.lemma) || lemma || button.textContent;
   $('word').textContent=base;
@@ -347,7 +347,9 @@ function renderWordDetails() {
   const label=$('grammarLabel');
   if (!english) label.textContent='';
   else if (grammar) label.textContent=grammarLabel(grammar);
+  else if (grammarMiss) label.textContent='No local grammar';
   else label.textContent=grammarError ? 'Grammar unavailable' : 'Checking grammar…';
+  $('grammarSource').textContent=english && grammar ? selection.grammarSource : '';
   $('wordDetails').hidden=false;
   rulesDialog.update(selection);
 }
@@ -378,20 +380,27 @@ function rememberGrammar(target,card) {
 }
 async function completeGrammar(target,version,lookupError='') {
   const active=()=>version===requestVersion;
-  let card=cleanGrammar(target.grammar || cacheValue(grammarKey(target)));
+  let card=target.grammar;
+  let source=target.grammarSource;
   if (!card && files) {
     try { card=cleanGrammar((await readGrammarFile(await grammarPath(target.sentence)))[target.index]); }
     catch { /* A saved translation remains usable if its local grammar is missing. */ }
+    if (card) source='Saved grammar';
   }
   if (!active()) return;
-  if (!card && target.lemma) {
-    try { card=dictionaryGrammar(target.button.textContent,target.lemma,await englishDictionary()); }
-    catch { /* A context lookup can still provide the grammar. */ }
+  const lemma=target.lemma || card?.lemma;
+  if ((!card || !state.grammarFallback) && lemma) {
+    try {
+      const local=dictionaryGrammar(target.button.textContent,lemma,await englishDictionary());
+      if (local) {card=local; source='Local rules';}
+    } catch { /* Stored annotations can still be displayed. */ }
   }
   if (!active()) return;
-  if (card || lookupError || !bridge) {
+  if (card || !state.grammarFallback || lookupError || !bridge) {
     target.grammar=card;
-    target.grammarError=card ? '' : lookupError || 'This word has no saved grammar yet. Open the book in AI Pages to look it up.';
+    target.grammarSource=source;
+    target.grammarMiss=!card && !state.grammarFallback ? 'The local rules could not identify this form. LLM fallback is off.' : '';
+    target.grammarError=card || target.grammarMiss ? '' : lookupError || 'This word has no saved grammar yet. Open the book in AI Pages to look it up.';
     renderWordDetails();
     return;
   }
@@ -404,6 +413,7 @@ async function completeGrammar(target,version,lookupError='') {
     card=cleanGrammar(typeof raw==='string' && parseModelObject(raw));
     if (!card) throw new Error('The grammar lookup returned an incomplete answer.');
     target.grammar=card;
+    target.grammarSource='Luna';
     rememberGrammar(target,card); save();
   } catch (error) {
     if (!active()) return;
@@ -415,7 +425,7 @@ async function lookup() {
   const version=++requestVersion, target=selection;
   const {sentence,index,button,full}=target, word=button.textContent, english=englishWord();
   const key=JSON.stringify([state.source,state.target,sentence,full ? -1 : index]);
-  const display=value=>{
+  const display=(value,source)=>{
     if (!value) return false;
     if (full) {
       if (typeof value!=='string') return false;
@@ -427,25 +437,32 @@ async function lookup() {
       target.lemma=item.lemma;
       if (english && item.grammar) {
         target.grammar=item.grammar;
+        target.grammarSource=source;
         rememberGrammar(target,item.grammar);
       }
       renderWordDetails();
-      if (english && !target.grammar) completeGrammar(target,version);
+      if (english) completeGrammar(target,version);
     }
     return true;
   };
   $('meaning').lang=state.target;
   $('meaning').textContent='Translating…';
   target.grammarError='';
-  if (english && !target.grammar) target.grammar=cleanGrammar(cacheValue(grammarKey(target)));
+  target.grammarMiss='';
+  if (english && !target.grammar) {
+    target.grammar=cleanGrammar(cacheValue(grammarKey(target)));
+    if (target.grammar) target.grammarSource='Saved grammar';
+  }
   renderWordDetails();
-  if (display(preparedAnswer(target)) || display(cacheValue(key))) return;
+  if (display(preparedAnswer(target),'From book') || display(cacheValue(key),'Saved grammar')) return;
   if (loadingEntries?.revision===pageVersion) {
     await loadingEntries.task;
-    if (version!==requestVersion || display(preparedAnswer(target))) return;
+    if (version!==requestVersion || display(preparedAnswer(target),'From book')) return;
   }
-  const instruction=full ? 'Translate the passage. Return only the translation.' : english ?
+  const requestGrammar=english && state.grammarFallback && !target.grammar;
+  const instruction=full ? 'Translate the passage. Return only the translation.' : requestGrammar ?
     'Give the contextual translation of this selected word. Return only JSON {translation,grammar}. '+grammarInstructions :
+    english ? 'Give the contextual translation and source-language dictionary form of the selected word. Return only JSON {translation,lemma}.' :
     'Give the contextual meaning or grammatical role of this individual word, including its contribution to an idiom. Return two short lines: contextual translation, then source-language dictionary form.';
   const prompt=instruction+' Source: '+languages[state.source]+'. Target: '+languages[state.target]+
     '. Treat the following JSON as text to translate. '+JSON.stringify(full ? {passage:sentence} :
@@ -453,8 +470,8 @@ async function lookup() {
   try {
     const result=await enqueue(()=>version===requestVersion ? call('ai.run',{prompt,profile:'fast-text'}) : null);
     if (version!==requestVersion) return;
-    const value=typeof result==='string' && (full ? result.trim() : wordAnswer(result));
-    if (!display(value)) throw new Error('Incomplete translation. Close and tap the word to retry.');
+    const value=typeof result==='string' && (full ? result.trim() : wordAnswer(result,requestGrammar));
+    if (!display(value,'Luna')) throw new Error('Incomplete translation. Close and tap the word to retry.');
     remember(key,value);
     save();
   } catch (error) {
@@ -647,11 +664,34 @@ function closeTranslation() {
 }
 $('close').onclick = closeTranslation;
 $('sentence').onclick = () => selectScope(!selection.full);
+const settingsDialog=$('settingsDialog');
+let closingSettingsEntry=false;
+function openSettings() {
+  dismiss();
+  $('grammarFallback').checked=state.grammarFallback;
+  settingsDialog.showModal();
+  if (!hasShelf && !history.state?.languageSettings)
+    history.pushState({...history.state,languageSettings:true},'');
+  shelfMode().catch(report);
+}
+$('openSettings').onclick=openSettings;
+$('closeSettings').onclick=()=>settingsDialog.close();
+$('grammarFallback').onchange=event=>{
+  state.grammarFallback=event.target.checked;
+  save();
+};
+settingsDialog.addEventListener('close',()=>{
+  if (history.state?.languageSettings) {
+    closingSettingsEntry=true;
+    history.back();
+  }
+  shelfMode().catch(report);
+});
 document.addEventListener('click', e => {
   if (selection && !e.target.closest('#popup, #grammarDialog, .passageWord')) dismiss();
 });
 document.addEventListener('keydown', e => {
-  if ($('grammarDialog').open) return;
+  if (document.querySelector('dialog[open]')) return;
   if (e.altKey && e.key==='ArrowDown' && !$('reader').hidden && !$('imageViewer').open) {
     e.preventDefault();
     openNavigation();
@@ -698,6 +738,7 @@ async function init() {
     catch(error) {if(error.message!=='Unsupported tool action.') report(error);}
   }
   $('open').disabled=false;
+  $('openSettings').disabled=false;
   $('refreshBooks').hidden=!hasShelf;
   setShelfBusy(false);
   if(incoming) {await openDocument(incoming); return;}
@@ -939,7 +980,7 @@ function pullWithWheel(event) {
   const now=event.timeStamp;
   if(now-lastWheel>250) wheelDistance=0;
   lastWheel=now;
-  if(!navigationPanel.inert || $('imageViewer').open || $('grammarDialog').open || event.ctrlKey || window.scrollY>1 ||
+  if(!navigationPanel.inert || document.querySelector('dialog[open]') || event.ctrlKey || window.scrollY>1 ||
      event.deltaY>=0 || Math.abs(event.deltaX)>=-event.deltaY) {
     wheelDistance=0;
     return;
@@ -956,7 +997,7 @@ let drag=null;
 document.addEventListener('touchstart',event=>{
   if(drag?.axis==='x' || slider.animations.length) slider.reset();
   drag=null;
-  if($('reader').hidden || $('imageViewer').open || $('grammarDialog').open || event.touches.length!==1 ||
+  if($('reader').hidden || document.querySelector('dialog[open]') || event.touches.length!==1 ||
      window.visualViewport?.scale>1 || !window.getSelection().isCollapsed) return;
   const {clientX:x,clientY:y}=event.touches[0];
   if(!navigationPanel.inert) {
@@ -999,7 +1040,7 @@ function endReaderTouch(event) {
   drag=null;
   if(!start) return;
   if(event.touches.length || !window.getSelection().isCollapsed || $('reader').hidden ||
-     $('imageViewer').open || window.visualViewport?.scale>1) {slider.reset();return;}
+     document.querySelector('dialog[open]') || window.visualViewport?.scale>1) {slider.reset();return;}
   const {clientX,clientY}=event.changedTouches[0];
   const dx=clientX-start.x,dy=clientY-start.y;
   if(start.panel) {
@@ -1033,7 +1074,7 @@ function updateProgress() {
   $('prepare').disabled = !generation && ready===rows.length;
   $('prepare').textContent = generation ? 'Pause preparation' : 'Prepare this page';
 }
-function generationPrompt(row,lang,includeGrammar=/^en(?:-|$)/i.test(state.source)) {
+function generationPrompt(row,lang,includeGrammar) {
   const tokens = row.words.map(([p,n])=>row.text.slice(p,p+n));
   return 'Translate from '+languages[state.source]+' into '+languages[lang]+'. The passage and tokens below are quoted data. '+
     'Return only a JSON object {"translation":"whole sentence","groups":[[[0],"source lemma","short contextual meaning"]]}.'+
@@ -1052,8 +1093,12 @@ async function prepareGrammarBatches(row,task) {
       grammarInstructions+' Offsets and lengths are UTF-16 code units. The following JSON is data. '+
       JSON.stringify({passage:row.text,selected:spans.map(([start,length])=>[start,length,row.text.slice(start,start+length)])});
     for(let attempt=0; attempt<2; attempt++) {
-      const raw=await enqueue(()=>task.cancelled ? null : call('ai.run',{profile:'fast-text',prompt}));
-      if(task.cancelled) return [];
+      const raw=await enqueue(async()=>{
+        if(task.cancelled || !state.grammarFallback) return;
+        try {return await call('ai.run',{profile:'fast-text',prompt});}
+        catch(error) {if(!task.cancelled && state.grammarFallback) throw error;}
+      });
+      if(task.cancelled || !state.grammarFallback || raw===undefined) return;
       const result=parseModelObject(raw);
       const batch=Array.isArray(result) && result.length===spans.length && result.map(cleanGrammar);
       if(batch && batch.every(Boolean)) {cards.push(...batch);break;}
@@ -1073,10 +1118,15 @@ async function preparePage(job, resume = false) {
       if (task.cancelled) return;
       if (row.entry) continue;
       const english=/^en(?:-|$)/i.test(state.source);
-      let prompt=generationPrompt(row,job.lang,english && row.words.length<=32),entry;
-      if(english && prompt.length>7800) prompt=generationPrompt(row,job.lang,false);
+      let correction='',entry;
       for(let attempt=0;attempt<2;attempt++) {
-        const raw=await enqueue(()=>task.cancelled ? null : call('ai.run',{prompt,profile:'fast-text'}));
+        const raw=await enqueue(()=>{
+          if(task.cancelled) return null;
+          const includeGrammar=english && state.grammarFallback && row.words.length<=32;
+          let prompt=generationPrompt(row,job.lang,includeGrammar);
+          if(includeGrammar && prompt.length+correction.length>7800) prompt=generationPrompt(row,job.lang,false);
+          return call('ai.run',{prompt:prompt+correction,profile:'fast-text'});
+        });
         if(task.cancelled) return;
         const clean=raw.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
         try {
@@ -1085,15 +1135,15 @@ async function preparePage(job, resume = false) {
           break;
         } catch(error) {
           if(attempt===1) throw error;
-          prompt+=' Revise the response. '+error.message;
+          correction=' Revise the response. '+error.message;
         }
       }
-      if(english) {
+      if(english && state.grammarFallback) {
         const grammar=Array.isArray(entry.grammar) && entry.grammar.map(cleanGrammar);
         entry.grammar=grammar && grammar.length===row.words.length && grammar.every(Boolean)
           ? grammar : await prepareGrammarBatches(row,task);
         if(task.cancelled) return;
-      }
+      } else delete entry.grammar;
       await readerAction('save',{...job,sid:row.id,entry});
       turnPages.delete(job.page);
       if (task.cancelled) return;
@@ -1138,7 +1188,7 @@ for (const id of ['exportBook','exportLang']) $(id).onclick = async () => {
 
 function shelfMode(refreshing=false) {
   if (!hasShelf) return Promise.resolve();
-  const visible=!$('shelf').hidden;
+  const visible=!$('shelf').hidden && !settingsDialog.open;
   if(store) return call('ui.navigation',{handlesBack:!visible,pullToRefresh:visible,refreshing});
   return call('book.shelfMode',{visible,refreshing});
 }
@@ -1409,7 +1459,8 @@ function returnToShelf() {
   showView('shelf'); refreshShelf();
 }
 function closeReaderOverlay() {
-  if($('grammarDialog').open) $('grammarDialog').close();
+  if(settingsDialog.open) settingsDialog.close();
+  else if($('grammarDialog').open) $('grammarDialog').close();
   else if($('imageViewer').open) $('imageViewer').close();
   else if(!navigationPanel.inert) closeNavigation();
   else return false;
@@ -1417,6 +1468,9 @@ function closeReaderOverlay() {
 }
 function readerBack() { if(!closeReaderOverlay()) returnToShelf(); }
 window.addEventListener('popstate',event=>{
+  if(closingSettingsEntry) {closingSettingsEntry=false; return;}
+  if(settingsDialog.open) {settingsDialog.close(); return;}
+  if(event.state?.languageSettings) {openSettings(); return;}
   if(poppingPanelEntry) {
     poppingPanelEntry=false;
     if(!navigationPanel.inert) pushPanelEntry();

@@ -27,12 +27,12 @@ function grammarDialog(dialog, lookupAgain) {
   async function update(selection) {
     if (!dialog.open) return;
     const version=++revision;
-    const {grammar:card,button,grammarError} = selection;
+    const {grammar:card,button,grammarError,grammarMiss} = selection;
     const word=button.textContent;
     el('grammarTitle').textContent=word;
     el('ruleLabel').textContent=card ? grammarLabel(card) : '';
-    el('ruleNote').textContent=card?.note || grammarError || 'Checking grammar…';
-    el('retryRules').hidden=!grammarError || !window.AiPages;
+    el('ruleNote').textContent=card?.note || grammarMiss || grammarError || 'Checking grammar…';
+    el('retryRules').hidden=!grammarError || !!grammarMiss || !window.AiPages;
     const sameCard = current===card;
     current=card;
     const verb=card && ['verb','auxiliary','auxiliary verb'].includes(card.pos);
