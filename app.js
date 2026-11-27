@@ -292,7 +292,6 @@ function selectScope(full) {
   span.classList.toggle('activeSentence', full);
   (full ? span : button).after(popup);
   popup.hidden = false;
-  $('rules').hidden=!englishWord();
   $('rules').lang=grammarLanguage();
   $('rules').textContent=grammarText('Rules',grammarLanguage());
   toggle.textContent = full ? 'Word' : 'Sentence';
@@ -339,22 +338,21 @@ function wordAnswer(raw, includeGrammar=true) {
   return {translation:lines.join('\n'),lemma};
 }
 function renderWordDetails() {
+  const english=selection && englishWord();
+  const canRetry=state.grammarFallback && bridge && selection?.grammarError;
+  $('rules').hidden=!english || !(selection.grammar || canRetry);
   if (!selection || selection.full) {
     $('wordDetails').hidden=true; $('word').textContent=''; $('grammarLabel').textContent=''; return;
   }
-  const {grammar,lemma,button,grammarError,grammarMiss}=selection;
-  const english=englishWord();
+  const {grammar,lemma,button,grammarSource}=selection;
   const base=(english && grammar?.lemma) || lemma || button.textContent;
   $('word').textContent=base;
   $('word').lang=state.source;
   const label=$('grammarLabel'), lang=grammarLanguage();
   label.lang=lang;
   $('grammarSource').lang=lang;
-  if (!english) label.textContent='';
-  else if (grammar) label.textContent=grammarLabel(grammar,lang);
-  else if (grammarMiss) label.textContent=grammarText('No local grammar',lang);
-  else label.textContent=grammarText(grammarError ? 'Grammar unavailable' : 'Checking grammar…',lang);
-  $('grammarSource').textContent=english && grammar ? grammarText(selection.grammarSource,lang) : '';
+  label.textContent=english && grammar ? grammarLabel(grammar,lang) : '';
+  $('grammarSource').textContent=english && grammar && grammarSource!=='Local rules' ? grammarText(grammarSource,lang) : '';
   $('wordDetails').hidden=false;
   rulesDialog.update(selection,lang);
 }
@@ -430,7 +428,6 @@ async function resolveLocalGrammar(target,version) {
   if (version!==requestVersion) return;
   target.grammar=card;
   target.grammarSource=source;
-  target.grammarMiss=!card && !state.grammarFallback ? 'The local rules could not identify this form. LLM fallback is off.' : '';
   renderWordDetails();
 }
 async function completeGrammar(target,version,lookupError='') {
@@ -487,7 +484,6 @@ async function lookup() {
   $('meaning').lang=state.target;
   $('meaning').textContent='Translating…';
   target.grammarError='';
-  target.grammarMiss='';
   if (english && !target.grammar) {
     target.grammar=cleanGrammar(cacheValue(grammarKey(target)));
     if (target.grammar) target.grammarSource='Saved grammar';

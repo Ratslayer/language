@@ -141,7 +141,7 @@ def verify_english_rules(browser):
     page.get_by_role("button", name="feet", exact=True).tap()
     expect(page.locator("#word")).to_have_text("foot")
     expect(label).to_contain_text("noun, plural")
-    expect(page.locator("#grammarSource")).to_have_text("Local rules")
+    expect(page.locator("#grammarSource")).to_have_text("")
     assert page.locator(".translationHeading").locator("button").all_text_contents() == ["🔊", "Sentence", "Rules", "×"]
     assert page.locator(".translationHeading strong").count() == 0
     assert page.locator("#word").evaluate("e=>getComputedStyle(e).fontWeight") in ("700", "bold")
@@ -156,7 +156,7 @@ def verify_english_rules(browser):
     expect(page.locator("#popup")).to_be_visible()
     page.get_by_role("button", name="eaten", exact=True).tap()
     expect(label).to_contain_text("past participle, past perfect")
-    expect(page.locator("#grammarSource")).to_have_text("Local rules")
+    expect(page.locator("#grammarSource")).to_have_text("")
     rules.tap()
     expect(table.locator("[aria-current=true] td")).to_have_text("had eaten")
     dialog.locator("select").select_option("present simple")
@@ -180,17 +180,16 @@ def verify_english_rules(browser):
     assert page.evaluate("replies.length") == 0
     page.get_by_role("button", name="avid", exact=True).tap()
     expect(label).to_have_text("adjective, base form")
-    expect(page.locator("#grammarSource")).to_have_text("Local rules")
+    expect(page.locator("#grammarSource")).to_have_text("")
     page.get_by_role("button", name="zandor", exact=True).tap()
     expect(page.locator("#grammarSource")).to_have_text("From book")
     page.get_by_role("button", name="flarnix", exact=True).tap()
     expect(page.locator("#meaning")).to_have_text("gloss")
-    rules.tap()
-    expect(label).to_have_text("No local grammar")
-    expect(dialog.locator("#ruleNote")).to_contain_text("LLM fallback is off")
-    expect(dialog.locator("#retryRules")).to_be_hidden()
+    expect(page.locator("#word")).to_have_text("flarnix")
+    expect(label).to_be_empty()
+    expect(page.locator("#grammarSource")).to_be_empty()
+    expect(rules).to_be_hidden()
     assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 0
-    dialog.locator("#closeRules").tap()
     settings = page.get_by_role("button", name="Settings", exact=True)
     settings.tap()
     checkbox = page.get_by_role("checkbox", name="Fallback to LLM when grammar is missing")
@@ -210,10 +209,12 @@ def verify_english_rules(browser):
     expect(checkbox).to_be_checked()
     page.keyboard.press("Escape")
     page.get_by_role("button", name="flarnix", exact=True).tap()
-    rules.tap()
     page.wait_for_function("replies.length === 1")
+    expect(rules).to_be_hidden()
+    expect(label).to_be_empty()
     page.evaluate("""replies.shift()(JSON.stringify({lemma:'flarnix',pos:'adjective',form:'base form',
       note:'A fictional adjective.'}))""")
+    rules.tap()
     expect(dialog.locator("#ruleNote")).to_contain_text("fictional adjective")
     expect(page.locator("#grammarSource")).to_have_text("Luna")
     dialog.locator("#closeRules").tap()
@@ -250,7 +251,7 @@ def verify_live_english(browser):
         saw.nth(i).tap()
         page.wait_for_function("replies.length === 1")
         assert "{translation,lemma}" in page.evaluate("calls.filter(q=>q.method==='ai.run').at(-1).prompt")
-        expect(page.locator("#grammarSource")).to_have_text("Локальные правила")
+        expect(page.locator("#grammarSource")).to_have_text("")
         page.locator("#rules").tap()
         page.evaluate("raw=>replies.shift()(raw)", json.dumps(answer))
         expect(page.locator("#ruleLabel")).to_contain_text(["глагол", "существительное"][i])
@@ -276,7 +277,8 @@ def verify_translation_only(browser):
           grammar:{lemma:'unexpected',pos:'noun',form:'singular',note:'Unrequested AI grammar.'}}))""", [lemma, gloss])
         expect(page.locator("#meaning")).to_have_text(gloss)
         expect(page.locator("#word")).to_have_text(lemma)
-        expect(page.locator("#grammarSource")).to_have_text("Локальные правила")
+        expect(page.locator("#grammarLabel")).not_to_be_empty()
+        expect(page.locator("#grammarSource")).to_be_empty()
     assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 2
     page.close()
 
@@ -296,7 +298,7 @@ def verify_grammar_without_translation(browser):
     page.evaluate("""()=>{const q=calls.find(q=>q.method==='ai.run');
       AiPages.onmessage({data:JSON.stringify({id:q.id,error:'HTTP 403'})});}""")
     expect(page.locator("#meaning")).to_have_text("HTTP 403")
-    expect(page.locator("#grammarSource")).to_have_text("Локальные правила")
+    expect(page.locator("#grammarSource")).to_have_text("")
     expect(page.locator("#retryRules")).to_be_hidden()
     assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 1
     page.close()
@@ -393,7 +395,9 @@ def verify_dialog_height(browser):
       window.fixture={name:'test.txt',text:'She had already flarned.'};""")
     dialog = page.locator("#grammarDialog")
     page.get_by_role("button", name="flarned", exact=True).tap()
-    page.locator("#rules").tap()
+    page.wait_for_function("replies.length === 1")
+    expect(page.locator("#grammarLabel")).to_be_empty()
+    expect(page.locator("#rules")).to_be_hidden()
 
     def dimensions():
         return dialog.evaluate("""d => {
@@ -407,17 +411,17 @@ def verify_dialog_height(browser):
         assert size["bottom"] <= page.viewport_size["height"] + 1, size
         return size["height"]
 
-    expect(dialog.locator("#ruleNote")).to_have_text("Проверяем грамматику…")
-    pending_height = fits()
     error = "OpenAI could not complete the request, HTTP 403"
     page.evaluate("""error => {const q=calls.filter(q=>q.method==='ai.run').at(-1);
       AiPages.onmessage({data:JSON.stringify({id:q.id,error})});}""", error)
-    expect(page.locator("#grammarLabel")).to_have_text("Разбор недоступен")
+    expect(page.locator("#grammarLabel")).to_have_text("")
+    page.locator("#rules").tap()
     expect(dialog.locator("#ruleNote")).to_have_text(error)
     expect(dialog.locator("#retryRules")).to_be_in_viewport()
-    assert fits() > pending_height
+    error_height = fits()
     dialog.locator("#retryRules").tap()
-    expect(dialog.locator("#ruleNote")).to_have_text("Проверяем грамматику…")
+    expect(dialog.locator("#ruleNote")).to_be_empty()
+    assert fits() < error_height
     page.wait_for_function("replies.length===2")
     page.evaluate("""replies.pop()(JSON.stringify({translation:'example',grammar:{lemma:'flarn',pos:'verb',
       form:'past participle',tense:'past perfect',subject:'3s',note:'The meal happened before another past event.',noteRu:'Действие произошло до другого момента в прошлом.'}}))""")

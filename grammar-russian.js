@@ -34,12 +34,11 @@ const russianGrammarTerms = {
 };
 const russianGrammarUI = {
   'Fallback to LLM when grammar is missing':'Обращаться к ИИ, если грамматический разбор отсутствует',
-  Rules:'Правила', 'Local rules':'Локальные правила', 'Saved grammar':'Сохранённый разбор',
-  'From book':'Из книги', 'No local grammar':'Нет локального разбора', 'Grammar unavailable':'Разбор недоступен',
-  'Checking grammar…':'Проверяем грамматику…', 'Close rules':'Закрыть правила',
+  Rules:'Правила', 'Saved grammar':'Сохранённый разбор',
+  'From book':'Из книги',
+  'Close rules':'Закрыть правила',
   'Verb form':'Форма глагола', 'Principal parts':'Основные формы', 'Word forms':'Формы слова',
   'Retry grammar lookup':'Повторить поиск', 'Word forms could not be loaded.':'Не удалось загрузить формы слова.',
-  'The local rules could not identify this form. LLM fallback is off.':'Не удалось определить форму по локальным правилам. Обращение к ИИ выключено.',
   'This word has no saved grammar yet. Open the book in AI Pages to look it up.':'Для этого слова нет сохранённого разбора. Откройте книгу в AI Pages, чтобы получить разбор.',
   'The grammar lookup returned an incomplete answer.':'Получен неполный грамматический разбор.',
   'Grammar is unavailable offline for this word.':'Грамматический разбор этого слова недоступен офлайн.',
