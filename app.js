@@ -245,7 +245,6 @@ function render() {
   }
   $('title').textContent = state.name;
   $('readingVersion').hidden=true;
-  $('chapters').hidden=true;
   updatePageControls(pages.length);
 }
 function wordButton(text, context) {
@@ -358,13 +357,19 @@ $('shelfTarget').onchange=()=>{
   save(); refreshShelf();
 };
 let navigation=Promise.resolve();
+let requestedPage=null;
 function goToPage(page,chapterStart) {
-  navigation=moveToPage(page,chapterStart);
-  return navigation;
+  const total = pack?.pages ?? pages.length;
+  if (!Number.isInteger(page) || page < 0 || page >= total) return Promise.resolve();
+  closeNavigation();
+  requestedPage=page;
+  const move=moveToPage(page,chapterStart).finally(()=>{
+    if(navigation===move) requestedPage=null;
+  });
+  navigation=move;
+  return move;
 }
 async function moveToPage(page, chapterStart) {
-  const total = pack?.pages ?? pages.length;
-  if (!Number.isInteger(page) || page < 0 || page >= total) return;
   if (pack) {
     if (!await renderPack(page)) return;
   } else {
@@ -376,7 +381,6 @@ async function moveToPage(page, chapterStart) {
   if (chapterStart && rows[0]?.id!==chapterStart.id) {
     $('sentence-'+chapterStart.id)?.scrollIntoView({block:'start'});
     recordScroll();
-    $('chapters').textContent=chapterStart.chapter+' ▾';
   }
   save();
 }
@@ -385,7 +389,8 @@ $('pageJump').onsubmit = event => {
   $('pageNumber').blur();
   goToPage($('pageNumber').valueAsNumber - 1).catch(report);
 };
-for (const [id, step] of [['prev',-1],['next',1]]) $(id).onclick = () => goToPage(state.page + step).catch(report);
+function turnPage(step) { goToPage((requestedPage ?? state.page) + step).catch(report); }
+for (const [id, step] of [['prev',-1],['next',1]]) $(id).onclick = () => turnPage(step);
 function closeTranslation() {
   const button = selection?.button;
   dismiss();
@@ -397,7 +402,11 @@ $('sentence').onclick = () => lookup(true);
 document.addEventListener('click', e => {
   if (selection && !e.target.closest('#popup, .passageWord')) dismiss();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && selection) closeTranslation(); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!navigationPanel.hidden) closeNavigation();
+  else if (selection) closeTranslation();
+});
 async function init() {
   const raw = bridge ? await call('storage.read') : localStorage.getItem(storageKey);
   if (bridge) $('open').textContent = 'Open TXT or PDF';
@@ -505,8 +514,6 @@ async function renderPack(page = state.page) {
   rows = result;
   drawPackPassage();
   $('title').textContent=active.title;
-  $('chapters').hidden=active.chapters ? !active.chapters.length : !rows[0].chapter;
-  $('chapters').textContent=(rows[0].chapter || 'Chapters')+' ▾';
   updatePageControls(active.pages);
   updateProgress();
   return true;
@@ -555,12 +562,23 @@ $('readingVersion').onclick=()=>{
   state.translatedLanguage=translated ? '' : state.target;
   drawPackPassage(); save();
 };
-// Older APKs expose chapter labels one page at a time. Build their index only on demand.
-async function legacyChapters(active) {
+const navigationPanel=$('readerNavigation');
+const navigationToggle=$('navigationToggle');
+let panelRevision=0;
+function closeNavigation() {
+  if(navigationPanel.hidden) return;
+  ++panelRevision;
+  const hadFocus=navigationPanel.contains(document.activeElement);
+  navigationPanel.hidden=true;
+  navigationToggle.setAttribute('aria-expanded','false');
+  if(hadFocus) navigationToggle.focus({preventScroll:true});
+}
+// Older APKs expose chapter labels one page at a time. Cancel the scan when the panel closes.
+async function legacyChapters(active,revision) {
   const chapters=[];
   let previous;
   for(let page=0;page<active.pages;page++) {
-    if(pack!==active || !$('chapterDialog').open) return null;
+    if(pack!==active || revision!==panelRevision) return null;
     const items=await readerAction('page',{book:active.book,lang:state.target,page});
     for(const {chapter,id} of items) {
       if(chapter && chapter!==previous) chapters.push({chapter,id,page});
@@ -569,38 +587,84 @@ async function legacyChapters(active) {
   }
   return chapters;
 }
-$('chapters').onclick=async ()=>{
-  const active=pack, dialog=$('chapterDialog'), list=$('chapterList');
+async function openNavigation() {
+  if(!navigationPanel.hidden || $('reader').hidden) return;
+  dismiss();
+  const revision=++panelRevision,active=pack,list=$('chapterList');
   list.replaceChildren();
-  dialog.showModal();
+  $('chapterSection').hidden=!active || active.chapters?.length===0;
+  $('pageNumber').value=state.page+1;
+  navigationPanel.hidden=false;
+  navigationToggle.setAttribute('aria-expanded','true');
+  $('navigationClose').focus({preventScroll:true});
+  if($('chapterSection').hidden) return;
   try {
     if(!active.chapters) {
       list.textContent='Loading chapters…';
-      const index=await legacyChapters(active);
-      if(!index) return;
+      const index=await legacyChapters(active,revision);
+      if(!index || revision!==panelRevision || pack!==active) return;
       active.chapters=index;
     }
-    if(pack!==active || !dialog.open) return;
     list.replaceChildren();
+    $('chapterSection').hidden=!active.chapters.length;
     let current;
     for(const start of active.chapters) {
       const button=document.createElement('button');
       button.textContent=start.chapter+' · p. '+(start.page+1);
-      button.onclick=()=>{
-        dialog.close();
-        goToPage(start.page,start).catch(report);
-      };
+      button.onclick=()=>goToPage(start.page,start).catch(report);
       list.append(button);
       if(start.page<state.page || (start.page===state.page &&
-        (start.id===rows[0]?.id || $('sentence-'+start.id)?.getBoundingClientRect().top<=0))) current=button;
+        (start.id===rows[0]?.id || $('sentence-'+start.id)?.getBoundingClientRect().top<=1))) current=button;
     }
     if(current) {
       current.setAttribute('aria-current','location');
-      current.scrollIntoView({block:'nearest'});
+      list.scrollTop=current.getBoundingClientRect().top-list.getBoundingClientRect().top;
     }
-  } catch(error) {list.textContent=error.message;}
-};
-$('chapterClose').onclick=()=>$('chapterDialog').close();
+  } catch(error) {if(revision===panelRevision) list.textContent=error.message;}
+}
+navigationToggle.onclick=()=>navigationPanel.hidden ? openNavigation() : closeNavigation();
+$('navigationClose').onclick=closeNavigation;
+document.addEventListener('click',event=>{
+  if(!navigationPanel.hidden && !event.target.closest('#readerNavigation,#navigationToggle')) closeNavigation();
+});
+
+let drag=null;
+document.addEventListener('touchstart',event=>{
+  drag=null;
+  if($('reader').hidden || !navigationPanel.hidden || $('imageViewer').open || event.touches.length!==1 ||
+     window.visualViewport?.scale>1 || !window.getSelection().isCollapsed ||
+     event.target.closest('input,select,a,#popup,button:not(.passageWord):not(.illustration)')) return;
+  const {clientX:x,clientY:y}=event.touches[0];
+  drag={x,y,axis:null,topY:window.scrollY<=1 ? y : null};
+},{passive:true});
+function moveReaderTouch(event) {
+  if(!drag) return;
+  if(event.touches.length!==1) {drag=null; return;}
+  const {clientX,clientY}=event.touches[0];
+  const dx=Math.abs(clientX-drag.x),dy=Math.abs(clientY-drag.y);
+  if(!drag.axis && Math.max(dx,dy)>=12) drag.axis=dx>dy ? 'x' : 'y';
+  if(window.scrollY>1) drag.topY=null;
+  else if(drag.topY===null || clientY<drag.topY) drag.topY=clientY;
+  if(event.cancelable && ((drag.axis==='x' && dx>1.5*dy) ||
+     (drag.axis==='y' && drag.topY!==null && clientY>drag.topY && dy>1.5*dx))) event.preventDefault();
+}
+document.addEventListener('touchcancel',()=>{drag=null;},{passive:true});
+function endReaderTouch(event) {
+  const start=drag;
+  drag=null;
+  if(!start || event.touches.length || !window.getSelection().isCollapsed || $('reader').hidden ||
+     !navigationPanel.hidden || $('imageViewer').open || window.visualViewport?.scale>1) return;
+  const {clientX,clientY}=event.changedTouches[0];
+  const dx=clientX-start.x,dy=clientY-start.y;
+  if(start.axis!=='y' && Math.abs(dx)>=60 && Math.abs(dx)>1.5*Math.abs(dy)) {
+    if(event.cancelable) event.preventDefault();
+    turnPage(dx>0 ? 1 : -1);
+  } else if(start.axis!=='x' && window.scrollY<=1 && start.topY!==null &&
+            clientY-start.topY>=64 && dy>1.5*Math.abs(dx)) {
+    if(event.cancelable) event.preventDefault();
+    openNavigation();
+  }
+}
 function updateProgress() {
   if (!pack) return;
   const ready = rows.filter(r=>r.entry).length;
@@ -691,7 +755,22 @@ function shelfMode(refreshing=false) {
   if(store) return call('ui.navigation',{handlesBack:!visible,pullToRefresh:visible,refreshing});
   return call('book.shelfMode',{visible,refreshing});
 }
-function showView(id) {
+function showView(id,updateHistory=true) {
+  // AI Pages delivers Back as a host event. Standalone previews use browser history.
+  if(!hasShelf && updateHistory && id!=='shelf') {
+    if(!$('shelf').hidden) history.pushState({languageView:id},'');
+    else history.replaceState({languageView:id},'');
+  }
+  drag=null;
+  if(id==='reader') {
+    document.addEventListener('touchmove',moveReaderTouch,{passive:false});
+    document.addEventListener('touchend',endReaderTouch,{passive:false});
+  } else {
+    document.removeEventListener('touchmove',moveReaderTouch);
+    document.removeEventListener('touchend',endReaderTouch);
+  }
+  requestedPage=null;
+  closeNavigation();
   if (id !== 'reader') readingSession=null;
   if (id !== 'reader' && !$('reader').hidden) pageVersion++;
   stopTracking();
@@ -866,13 +945,20 @@ $('importBook').onclick=async()=>{
 function returnToShelf() {
   showView('shelf'); refreshShelf();
 }
-$('backToBooks').onclick = returnToShelf;
-$('filesBack').onclick = returnToShelf;
-function readerBack() {
+function closeReaderOverlay() {
   if($('imageViewer').open) $('imageViewer').close();
-  else if($('chapterDialog').open) $('chapterDialog').close();
-  else returnToShelf();
+  else if(!navigationPanel.hidden) closeNavigation();
+  else return false;
+  return true;
 }
+function readerBack() { if(!closeReaderOverlay()) returnToShelf(); }
+window.addEventListener('popstate',event=>{
+  if(hasShelf) return;
+  if(closeReaderOverlay()) {history.pushState({languageView:'reader'},''); return;}
+  const view=event.state?.languageView;
+  if(view==='fileTools' || (view==='reader' && (pack || pages.length))) showView(view,false);
+  else returnToShelf();
+});
 window.addEventListener('tool-back',readerBack);
 window.addEventListener('tool-refresh',()=>{if(!shelfBusy)refreshShelf(true);else shelfMode().catch(report);});
 window.addEventListener('reader-books',readerBack);
