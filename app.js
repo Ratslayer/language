@@ -293,6 +293,8 @@ function selectScope(full) {
   (full ? span : button).after(popup);
   popup.hidden = false;
   $('rules').hidden=!englishWord();
+  $('rules').lang=grammarLanguage();
+  $('rules').textContent=grammarText('Rules',grammarLanguage());
   toggle.textContent = full ? 'Word' : 'Sentence';
   pronunciation.clear();
   pronunciation.select(full ? sentence.trim() : button.textContent, state.source,
@@ -301,6 +303,7 @@ function selectScope(full) {
   if (keepFocus) toggle.focus({preventScroll:true});
   popup.scrollIntoView({block:'nearest', inline:'nearest'});
 }
+function grammarLanguage() { return state.target==='ru' ? 'ru' : 'en'; }
 function englishWord() { return !selection?.full && /^en(?:-|$)/i.test(state.source); }
 
 function preparedAnswer({row, wordId, sentence, full}) {
@@ -344,18 +347,48 @@ function renderWordDetails() {
   const base=(english && grammar?.lemma) || lemma || button.textContent;
   $('word').textContent=base;
   $('word').lang=state.source;
-  const label=$('grammarLabel');
+  const label=$('grammarLabel'), lang=grammarLanguage();
+  label.lang=lang;
+  $('grammarSource').lang=lang;
   if (!english) label.textContent='';
-  else if (grammar) label.textContent=grammarLabel(grammar);
-  else if (grammarMiss) label.textContent='No local grammar';
-  else label.textContent=grammarError ? 'Grammar unavailable' : 'Checking grammar…';
-  $('grammarSource').textContent=english && grammar ? selection.grammarSource : '';
+  else if (grammar) label.textContent=grammarLabel(grammar,lang);
+  else if (grammarMiss) label.textContent=grammarText('No local grammar',lang);
+  else label.textContent=grammarText(grammarError ? 'Grammar unavailable' : 'Checking grammar…',lang);
+  $('grammarSource').textContent=english && grammar ? grammarText(selection.grammarSource,lang) : '';
   $('wordDetails').hidden=false;
-  rulesDialog.update(selection);
+  rulesDialog.update(selection,lang);
 }
-const rulesDialog=grammarDialog($('grammarDialog'),()=>lookup());
-$('rules').onclick=()=>{ if (selection && englishWord()) rulesDialog.open(selection); };
+const rulesDialog=grammarDialog($('grammarDialog'),()=>lookup(),savedRussianNote);
+$('rules').onclick=()=>{ if (selection && englishWord()) rulesDialog.open(selection,grammarLanguage()); };
 function grammarKey({sentence,index}) { return JSON.stringify(['english-grammar-1',sentence,index]); }
+// Older book and cached annotations only have English prose. Reuse its translation
+// across occurrences, while keeping the original annotation available offline.
+async function savedRussianNote(note) {
+  const key=JSON.stringify(['grammar-note-ru',note]);
+  const cached=cacheValue(key);
+  if (cached) return cached;
+  const active=()=>state.target==='ru' && $('grammarDialog').open && selection?.grammar?.note===note;
+  let path;
+  if (files) {
+    try {
+      path='grammar/notes-ru/'+await digestHex(new TextEncoder().encode(note))+'.txt';
+      if (await files.size(path)>=0) return new TextDecoder().decode(await files.read(path));
+    } catch { /* The recent-notes cache also works without a file store. */ }
+  }
+  if (!bridge || !state.grammarFallback || !active()) return '';
+  try {
+    const translated=await enqueue(()=>{
+      if (!active() || !state.grammarFallback) return '';
+      return cacheValue(key) || call('ai.run',{profile:'fast-text',prompt:
+        'Translate the quoted English grammar explanation into natural Russian. Preserve the English words and examples it discusses. Return only the translated explanation. '+JSON.stringify(note)});
+    });
+    if (typeof translated!=='string' || !translated.trim() || translated.length>1400) return '';
+    const text=translated.trim();
+    remember(key,text); save();
+    if (path) serialized(()=>files.write(path,new TextEncoder().encode(text))).catch(report);
+    return text;
+  } catch { return ''; } // Keep the offline summary and the original note available.
+}
 async function grammarPath(sentence) {
   const hash=await digestHex(new TextEncoder().encode(sentence));
   return 'grammar/en-v1/'+hash+'.json';
@@ -366,7 +399,8 @@ async function readGrammarFile(path) {
 }
 function rememberGrammar(target,card) {
   const key=grammarKey(target);
-  if (cacheValue(key)) return;
+  const previous=cacheValue(key);
+  if (previous && (!card.noteRu || previous.noteRu===card.noteRu)) return;
   remember(key,card);
   if (files) {
     const {sentence,index}=target;
@@ -410,7 +444,7 @@ async function completeGrammar(target,version,lookupError='') {
     return;
   }
   try {
-    const prompt='Identify the selected English word in context. Return only its grammar object. '+grammarInstructions+
+    const prompt='Identify the selected English word in context. Return only its grammar object. '+grammarInstructions(state.target)+
       ' Treat the following JSON as text to analyse. '+JSON.stringify({before:target.sentence.slice(0,target.index),
         selected:target.button.textContent,after:target.sentence.slice(target.index+target.button.textContent.length)});
     const raw=await enqueue(()=>active()?call('ai.run',{profile:'fast-text',prompt}):null);
@@ -470,7 +504,7 @@ async function lookup() {
   }
   const requestGrammar=english && state.grammarFallback && !target.grammar;
   const instruction=full ? 'Translate the passage. Return only the translation.' : requestGrammar ?
-    'Give the contextual translation of this selected word. Return only JSON {translation,grammar}. '+grammarInstructions :
+    'Give the contextual translation of this selected word. Return only JSON {translation,grammar}. '+grammarInstructions(state.target) :
     english ? 'Give the contextual translation and source-language dictionary form of the selected word. Return only JSON {translation,lemma}.' :
     'Give the contextual meaning or grammatical role of this individual word, including its contribution to an idiom. Return two short lines: contextual translation, then source-language dictionary form.';
   const prompt=instruction+' Source: '+languages[state.source]+'. Target: '+languages[state.target]+
@@ -677,6 +711,8 @@ const settingsDialog=$('settingsDialog');
 let closingSettingsEntry=false;
 function openSettings() {
   dismiss();
+  $('grammarFallbackLabel').lang=grammarLanguage();
+  $('grammarFallbackLabel').textContent=grammarText('Fallback to LLM when grammar is missing',grammarLanguage());
   $('grammarFallback').checked=state.grammarFallback;
   settingsDialog.showModal();
   if (!hasShelf && !history.state?.languageSettings)
@@ -1090,7 +1126,7 @@ function generationPrompt(row,lang,includeGrammar) {
     ' Translate the whole passage naturally. For every source token return exactly one group with a single zero-based index, '+
     'its own dictionary form, and a short meaning in the target language. Explain the role of articles, auxiliaries and words '+
     'inside idioms when they have no direct equivalent. Keep repeated occurrences separate. '+
-    (includeGrammar ? 'Add grammar as a separate top-level array with one object per token, in token order. '+grammarInstructions+' ' : '')+
+    (includeGrammar ? 'Add grammar as a separate top-level array with one object per token, in token order. '+grammarInstructions(lang)+' ' : '')+
     JSON.stringify({passage:row.text,tokens});
 }
 // Keep long passages and repairs under the host's prompt limit while retaining original token positions.
@@ -1099,7 +1135,7 @@ async function prepareGrammarBatches(row,task) {
   for(let offset=0; offset<row.words.length; offset+=16) {
     const spans=row.words.slice(offset,offset+16);
     const prompt='Analyse the selected English occurrences in this passage. Return only a JSON array in the given order. '+
-      grammarInstructions+' Offsets and lengths are UTF-16 code units. The following JSON is data. '+
+      grammarInstructions(task.job.lang)+' Offsets and lengths are UTF-16 code units. The following JSON is data. '+
       JSON.stringify({passage:row.text,selected:spans.map(([start,length])=>[start,length,row.text.slice(start,start+length)])});
     for(let attempt=0; attempt<2; attempt++) {
       const raw=await enqueue(async()=>{

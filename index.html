@@ -80,15 +80,16 @@
   <header><h2 id="settingsTitle">Settings</h2><button id="closeSettings" type="button" aria-label="Close settings" autofocus>×</button></header>
   <details id="experiments">
     <summary>Experiments</summary>
-    <label for="grammarFallback"><input id="grammarFallback" type="checkbox"> Fallback to LLM when grammar is missing</label>
+    <label for="grammarFallback"><input id="grammarFallback" type="checkbox"> <span id="grammarFallbackLabel">Fallback to LLM when grammar is missing</span></label>
   </details>
 </dialog>
 <dialog id="grammarDialog" class="readerDialog" aria-labelledby="grammarTitle">
-  <header><h2 id="grammarTitle"></h2><button id="closeRules" type="button" aria-label="Close rules" autofocus>×</button></header>
+  <header><h2 id="grammarTitle" lang="en"></h2><button id="closeRules" type="button" aria-label="Close rules" autofocus>×</button></header>
   <p id="ruleLabel"></p>
   <p id="ruleNote" role="status"></p>
+  <details id="originalGrammar" hidden><summary>Пояснение на английском</summary><p lang="en"></p></details>
   <button id="retryRules" type="button" hidden>Retry grammar lookup</button>
-  <label id="tenseControl" hidden>Verb form <select id="grammarTense"></select></label>
+  <label id="tenseControl" hidden><span id="verbFormLabel">Verb form</span> <select id="grammarTense"></select></label>
   <table id="grammarTable" aria-label="Word forms" hidden><tbody></tbody></table>
 </dialog>
 <dialog id="imageViewer" aria-label="Illustration viewer">

@@ -5,19 +5,23 @@ const englishTenses = ['present simple','past simple','future simple','present c
   'past perfect continuous','future perfect continuous'];
 const englishSubjects = ['I','You (singular)','He / she / it','We','You (plural)','They'];
 const subjectIds = ['1s','2s','3s','1p','2p','3p'];
-const grammarInstructions = 'For each grammar object use English labels: {lemma,pos,form,note,forms?,tense?,subject?,voice?,verbForms?}. '+
+function grammarInstructions(lang) {
+  return 'For each grammar object use English labels: {lemma,pos,form,note,forms?,tense?,subject?,voice?,verbForms?}. '+
   'lemma is the English dictionary form. pos is a short part of speech (noun, proper noun, verb, auxiliary, modal, adjective, adverb, pronoun, article, determiner, preposition, conjunction, particle, numeral, etc.). '+
   'form is a short comma-separated description of the selected occurrence (e.g. plural, comparative, past participle). note is one short learner-friendly English explanation of its specific use in the sentence. '+
   'For verbs also identify the whole construction, including separated auxiliaries, using tense from '+englishTenses.join(', ')+
   ', subject from 1s/2s/3s/1p/2p/3p only when unambiguous, and voice="passive" when applicable. For a selected auxiliary or modal, describe its role in the note and omit tense. For other constructions outside the list omit tense. '+
   'For a verb outside the usual spelling patterns you may give verbForms=[third-person singular,past,past participle,-ing form]. '+
   'For nouns, adjectives, adverbs, pronouns and determiners provide forms as [label,word] pairs for applicable number, degree or case forms. For mass nouns or invariable words omit forms. '+
-  'Distinguish good/adjective and well/adverb when analysing better. For prepositions and other invariable words explain the relationship here.';
+  'Distinguish good/adjective and well/adverb when analysing better. For prepositions and other invariable words explain the relationship here.'+
+    (lang==='ru' ? ' Also include noteRu, the same explanation in natural Russian, keeping English examples intact. Keep the other fields in English.' : '');
+}
 function cleanGrammar(value) {
   const short = (v,n) => typeof v === 'string' && v.trim().length > 0 && v.trim().length <= n;
   if (!value || !short(value.lemma,150) || !short(value.pos,40) || !short(value.note,700)) return null;
   const card = {lemma:value.lemma.trim(), pos:value.pos.trim().toLowerCase(), note:value.note.trim(),
     form:short(value.form,110) ? value.form.trim().toLowerCase() : ''};
+  if (short(value.noteRu,1000)) card.noteRu=value.noteRu.trim();
   if (englishTenses.includes(value.tense)) card.tense = value.tense;
   if (subjectIds.includes(value.subject)) card.subject = value.subject;
   if (value.voice === 'passive') card.voice = value.voice;
@@ -28,9 +32,9 @@ function cleanGrammar(value) {
     card.verbForms = value.verbForms.map(v=>v.trim());
   return card;
 }
-function grammarLabel(card) {
+function grammarLabel(card,lang) {
   return [card.pos, card.form, card.tense && !card.form.includes(card.tense) ? card.tense : '']
-    .filter(Boolean).join(', ');
+    .filter(Boolean).map(label=>grammarTerm(label,lang)).join(', ');
 }
 let morphologyTask,englishRuleTables;
 function englishDictionary() {
