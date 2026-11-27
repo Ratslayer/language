@@ -90,8 +90,12 @@ html:has(#readerNavigation:not([inert])) { overflow:hidden; }
 #readerNavigation button, #pageNumber { min-height:44px; }
 #navigationClose { min-width:44px; }
 #readingVersion { margin-top:.5rem; }
-#chapterHeading { margin:.6rem 0 .25rem; font-size:1.2rem; }
-#chapterList button { display:block; width:100%; overflow-wrap:anywhere; text-align:start; border:0; }
+#readerNavigation summary { padding:.65rem 0; font-size:1.2rem; font-weight:bold; cursor:pointer; }
+#markSelection { min-width:44px; min-height:44px; fill:none; }
+#markSelection[aria-pressed="true"] { fill:currentColor; }
+.bookmarkRow { display:flex; align-items:center; gap:.4rem; }
+.bookmarkRow button:first-child { flex:1; min-width:0; }
+#chapterList button, .bookmarkRow button:first-child { display:block; width:100%; overflow-wrap:anywhere; text-align:start; border:0; }
 #chapterList [aria-current] { background:#d3e4ba; font-weight:bold; }
 
 .readingPassage .illustration { display:block; max-width:100%; margin:1em auto .25em; padding:0; border:0; border-radius:0; background:none; cursor:zoom-in; }

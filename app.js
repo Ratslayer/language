@@ -260,19 +260,21 @@ function render() {
 function fillTextPassage(article,page) {
   article.replaceChildren();
   article.lang = state.source;
-  for (const sentence of pages[page] || []) {
+  for (const [partId,sentence] of (pages[page] || []).entries()) {
     const span = document.createElement('span');
     article.append(span);
     for (const part of words.segment(sentence)) {
       if (!part.isWordLike) { span.append(part.segment); continue; }
-      span.append(wordButton(part.segment, { sentence, index:part.index }));
+      span.append(wordButton(part.segment, { partId, sentence, index:part.index }));
     }
   }
 }
+const wordContexts=new WeakMap();
 function wordButton(text, context) {
   const button = document.createElement('button');
   button.className = 'passageWord';
   button.textContent = text;
+  wordContexts.set(button,context);
   button.onclick = () => {
     if (selection?.button === button) { closeTranslation(); return; }
     flushScroll();
@@ -288,6 +290,7 @@ function selectScope(full) {
   const toggle = $('sentence');
   const keepFocus = document.activeElement === toggle;
   selection.full = full;
+  updateBookmarkButton();
   button.classList.toggle('active', !full);
   span.classList.toggle('activeSentence', full);
   (full ? span : button).after(popup);
@@ -302,6 +305,97 @@ function selectScope(full) {
   if (keepFocus) toggle.focus({preventScroll:true});
   popup.scrollIntoView({block:'nearest', inline:'nearest'});
 }
+// Personal selections are separate from the automatic resume position and downloaded books.
+let savedSelections={};
+const marksPath='bookmarks/selections.json';
+let markWrites=Promise.resolve();
+function bookmarkBookKey() {
+  const edition=Object.entries(state.catalogueEditions || {}).find(([,id])=>id===state.hash);
+  return edition ? 'catalogue:'+edition[0] : 'book:'+state.hash;
+}
+function selectionMark() {
+  const {row,partId,index,full,sentence,button}=selection;
+  return {page:state.page,rowId:row?.id ?? null,partId,sentence,
+    index:full ? null : index,word:full ? '' : button.textContent};
+}
+function sameMark(a,b) {
+  return a.page===b.page && a.rowId===b.rowId && a.partId===b.partId &&
+    a.sentence===b.sentence && a.index===b.index && a.word===b.word;
+}
+function updateBookmarkButton() {
+  const mark=selectionMark(),button=$('markSelection');
+  const saved=savedSelections[bookmarkBookKey()]?.some(item=>sameMark(item,mark)) || false;
+  button.setAttribute('aria-pressed',String(saved));
+  button.title='Bookmark '+(selection.full ? 'sentence' : 'word');
+  button.setAttribute('aria-label',button.title);
+}
+function changeBookmark(mark,remove) {
+  const bookId=bookmarkBookKey();
+  const write=markWrites.then(async()=>{
+    const items=(savedSelections[bookId] || []).filter(item=>!sameMark(item,mark));
+    if(!remove) items.push(mark);
+    const next={...savedSelections,[bookId]:items};
+    if(files) await files.write(marksPath,new TextEncoder().encode(JSON.stringify(next)));
+    else {
+      state.savedSelections=next;
+      try { await persist(); } catch(error) {state.savedSelections=savedSelections;throw error;}
+    }
+    savedSelections=next;
+    if(selection) updateBookmarkButton();
+    if(!navigationPanel.inert && $('bookmarkSection').open) renderBookmarks();
+  });
+  markWrites=write.catch(()=>{});
+  return write;
+}
+$('markSelection').onclick=()=>changeBookmark(selectionMark(),
+  $('markSelection').getAttribute('aria-pressed')==='true').catch(report);
+
+function renderBookmarks() {
+  const list=$('bookmarkList');
+  list.replaceChildren();
+  for(const mark of savedSelections[bookmarkBookKey()] || []) {
+    const row=document.createElement('div'),jump=document.createElement('button'),remove=document.createElement('button');
+    row.className='bookmarkRow';
+    jump.append('p. '+(mark.page+1)+' · ');
+    if(mark.index===null) jump.append(mark.sentence);
+    else {
+      const strong=document.createElement('strong');
+      strong.textContent=mark.word;
+      jump.append(mark.sentence.slice(0,mark.index),strong,mark.sentence.slice(mark.index+mark.word.length));
+    }
+    jump.onclick=()=>openBookmark(mark).catch(report);
+    remove.textContent='×';
+    remove.setAttribute('aria-label','Remove bookmark for '+(mark.word || mark.sentence));
+    remove.onclick=()=>changeBookmark(mark,true).catch(report);
+    row.append(jump,remove);list.append(row);
+  }
+  if(!list.childNodes.length) list.textContent='No bookmarks yet.';
+}
+async function openBookmark(mark) {
+  const bookId=state.hash;
+  if(mark.page>=(pack?.pages ?? pages.length)) {
+    closeNavigation();
+    throw new Error('This bookmarked page is no longer in the book.');
+  }
+  if(pack && state.translatedBook===pack.book) {
+    state.translatedBook=''; state.translatedLanguage=''; clearTurnPages();
+  }
+  const move=goToPage(mark.page);
+  await move;
+  if(navigation!==move || state.hash!==bookId || state.page!==mark.page || $('reader').hidden || !navigationPanel.inert) return;
+  for(const button of $('passage').querySelectorAll('.passageWord')) {
+    const ctx=wordContexts.get(button);
+    if((ctx.row?.id ?? null)!==mark.rowId || ctx.partId!==mark.partId || ctx.sentence!==mark.sentence) continue;
+    if(mark.index!==null && (ctx.index!==mark.index || button.textContent!==mark.word)) continue;
+    selection={...ctx,button};
+    selectScope(mark.index===null);
+    button.scrollIntoView({block:'center'});
+    button.focus({preventScroll:true});
+    return;
+  }
+  throw new Error('This passage has changed since you bookmarked it.');
+}
+
 function grammarLanguage() { return state.target==='ru' ? 'ru' : 'en'; }
 function englishWord() { return !selection?.full && /^en(?:-|$)/i.test(state.source); }
 
@@ -778,6 +872,8 @@ async function init() {
     try {incoming=await pickDocument('text.incoming');}
     catch(error) {if(error.message!=='Unsupported tool action.') report(error);}
   }
+  savedSelections=state.savedSelections || {};
+  if(files && await files.size(marksPath)>=0) savedSelections=JSON.parse(new TextDecoder().decode(await files.read(marksPath)));
   $('open').disabled=false;
   $('openSettings').disabled=false;
   $('refreshBooks').hidden=!hasShelf;
@@ -915,7 +1011,7 @@ function fillPackPassage(article,items,translated,deferred) {
       while (wordId < row.words.length && row.words[wordId][0] < end) {
         const [start, length] = row.words[wordId];
         span.append(row.text.slice(pos,start), wordButton(row.text.slice(start,start+length),
-          {row, wordId, sentence, index:start-offset}));
+          {row, wordId, partId:offset, sentence, index:start-offset}));
         pos = start + length;
         wordId++;
       }
@@ -977,6 +1073,9 @@ async function openNavigation() {
   dismiss();
   const revision=++panelRevision,active=pack,list=$('chapterList');
   list.replaceChildren();
+  $('chapterSection').open=false;
+  $('bookmarkSection').open=false;
+  $('bookmarkSection').ontoggle=()=>{if($('bookmarkSection').open) renderBookmarks();};
   $('chapterSection').hidden=!active || active.chapters?.length===0;
   $('pageNumber').value=state.page+1;
   // Read the visible sentence anchors while the passage still has a layout.
@@ -990,29 +1089,30 @@ async function openNavigation() {
   navigationPanel.inert=false;
   navigationPanel.scrollTop=0;
   $('navigationClose').focus({preventScroll:true});
-  if($('chapterSection').hidden) return;
-  try {
-    if(!active.chapters) {
-      list.textContent='Loading chapters…';
-      const index=store ? await readerAction('chapters',{book:active.book}) : await legacyChapters(active,revision);
-      if(!index || revision!==panelRevision || pack!==active) return;
-      active.chapters=index;
-    }
-    list.replaceChildren();
-    $('chapterSection').hidden=!active.chapters.length;
-    let current;
-    for(const start of active.chapters) {
-      const button=document.createElement('button');
-      button.textContent=start.chapter+' · p. '+(start.page+1);
-      button.onclick=()=>goToPage(start.page,start).catch(report);
-      list.append(button);
-      if(start.page<state.page || (start.page===state.page && start.id<=reachedId)) current=button;
-    }
-    if(current) {
-      current.setAttribute('aria-current','location');
-      navigationPanel.scrollTop=current.offsetTop-list.offsetTop;
-    }
-  } catch(error) {if(revision===panelRevision) list.textContent=error.message;}
+  $('chapterSection').ontoggle=()=>{
+    if($('chapterSection').open && !list.childNodes.length) loadChapters();
+  };
+  async function loadChapters() {
+    try {
+      if(!active.chapters) {
+        list.textContent='Loading chapters…';
+        const index=store ? await readerAction('chapters',{book:active.book}) : await legacyChapters(active,revision);
+        if(!index || revision!==panelRevision || pack!==active) return;
+        active.chapters=index;
+      }
+      list.replaceChildren();
+      $('chapterSection').hidden=!active.chapters.length;
+      let current;
+      for(const start of active.chapters) {
+        const button=document.createElement('button');
+        button.textContent=start.chapter+' · p. '+(start.page+1);
+        button.onclick=()=>goToPage(start.page,start).catch(report);
+        list.append(button);
+        if(start.page<state.page || (start.page===state.page && start.id<=reachedId)) current=button;
+      }
+      if(current) current.setAttribute('aria-current','location');
+    } catch(error) {if(revision===panelRevision) list.textContent=error.message;}
+  }
 }
 $('navigationClose').onclick=closeNavigation;
 
