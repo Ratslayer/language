@@ -43,14 +43,15 @@
     <article id="passage" class="readingPassage" dir="auto" aria-label="Reading text"></article>
     <span id="popup" role="region" lang="en" dir="ltr" aria-label="Translation" hidden>
       <span class="translationHeading">
-        <strong id="word" dir="auto"></strong>
         <button id="pronounce" type="button" aria-label="Pronounce word" title="Pronounce word" hidden>🔊</button>
         <button id="sentence" type="button">Sentence</button>
+        <button id="rules" type="button" aria-haspopup="dialog" hidden>Rules</button>
         <button id="close" aria-label="Close translation">×</button>
       </span>
       <span id="speechStatus" role="status"></span>
       <button id="installVoice" type="button" hidden></button>
-      <span id="answer" role="status" dir="auto"></span>
+      <span id="answer" role="status"><span id="meaning" dir="auto"></span><span id="wordDetails" hidden>
+<strong id="word" dir="auto"></strong> <em id="grammarLabel" lang="en"></em></span></span>
     </span>
     <nav hidden><button id="prev">Previous</button><span id="count"></span><button id="next">Next</button></nav>
   </section>
@@ -74,6 +75,14 @@
     <div id="chapterList"></div>
   </section>
 </section>
+<dialog id="grammarDialog" aria-labelledby="grammarTitle">
+  <header><h2 id="grammarTitle"></h2><button id="closeRules" type="button" aria-label="Close rules" autofocus>×</button></header>
+  <p id="ruleLabel"></p>
+  <p id="ruleNote" role="status"></p>
+  <button id="retryRules" type="button" hidden>Retry grammar lookup</button>
+  <label id="tenseControl" hidden>Verb form <select id="grammarTense"></select></label>
+  <table id="grammarTable" aria-label="Word forms" hidden><tbody></tbody></table>
+</dialog>
 <dialog id="imageViewer" aria-label="Illustration viewer">
   <canvas role="img"></canvas>
   <div class="imageControls" role="group" aria-label="Image controls">
