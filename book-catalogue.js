@@ -76,7 +76,7 @@ class BookCatalogue {
       }
     }
     for(const id of installed) if(!listed.has(id) && !slugs.has(this.cache.checkpoints[this.retired(id)])) {
-      const {title,pages}=await this.store.describe(id);
+      const {title,pages}=await this.store.describe(id,false);
       shelf.books.push({local:id,title,pages,ready:(await this.store.readyPages(id,lang)).size});
     }
     return shelf;
@@ -116,19 +116,37 @@ class BookCatalogue {
         if(previous) checkpoints[this.retired(previous)]=item.id;
         await this.persist({...this.cache,checkpoints});
       }
-      return this.store.describe(item.bookId);
+      return this.store.describe(item.bookId,false);
     });
   }
   snapshot(info,lang) {
     const installed=this.cache.checkpoints;
     return {...info,sourceHash:installed['installed:'+info.book+':source'],languageHash:installed['installed:'+info.book+':'+lang]};
   }
+  installedBook(slug) {
+    return this.cache.checkpoints[this.active(slug)] || this.item(slug).bookId;
+  }
+  async firstPage(item,lang) {
+    const asset=item.openingPage;
+    if(!asset || asset.sourceSha256!==item.source.sha256 || !bookIdPattern.test(asset.sha256)
+      || !/^[A-Za-z0-9_-]{10,160}$/.test(asset.fileId) || await this.files.size(filename(item.bookId))>=0) return null;
+    try {
+      const bytes=await this.files.download(asset,4*1024*1024);
+      if(this.item(item.id).source.sha256!==asset.sourceSha256) return null;
+      const packet=JSON.parse(new TextDecoder().decode(bytes));
+      requireData(packet.info.pages===item.pages,'Opening page differs from the catalogue.');
+      const translation=packet.languages?.[lang];
+      for(const row of packet.rows) row.entry=translation && translation.sha256===item.languages[lang]?.sha256
+        ? translation.entries[row.id] : undefined;
+      return unpackOpeningPage(packet,item.bookId,0);
+    } catch {return null;} // Opening-page assets are optional; the full source remains authoritative.
+  }
   async open(slug,lang='en') {
     const item=this.item(slug);
-    const prior=this.cache.checkpoints[this.active(slug)] || item.bookId;
+    const prior=this.installedBook(slug);
     const cached=await this.local(async()=>{
       if(this.store.openSource?.book!==prior && await this.files.size(filename(prior))<0) return null;
-      return this.snapshot(await this.store.describe(prior),lang);
+      return this.snapshot(await this.store.describe(prior,false),lang);
     });
     if(cached) return cached;
     try {

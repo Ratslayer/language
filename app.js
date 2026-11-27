@@ -40,6 +40,15 @@ function serialized(work) {
   return result;
 }
 function readerAction(action,args={}) {
+  const session=readingSession;
+  if(session?.needsSource && session.book===args.book && ['page','save','chapters','export'].includes(action))
+    return ensureReadingSource(session).then(()=>{
+      if(session.book!==args.book) throw new Error('The catalogue has a new edition of this book.');
+      return storeAction(action,args);
+    });
+  return storeAction(action,args);
+}
+function storeAction(action,args) {
   if(!store) return call('book.'+action,args); // Pages can update before the APK.
   const {book,lang,page}=args;
   if(action==='shelf') return catalogue.shelf(args.source,state.target);
@@ -50,7 +59,8 @@ function readerAction(action,args={}) {
   }
   return serialized(async ()=>{
     switch(action) {
-      case 'info': return store.describe(book);
+      case 'info': return store.describe(book,false);
+      case 'chapters': return chapterIndex(await store.source(book));
       case 'page': return store.page(book,lang,page,args.withIllustrations);
       case 'save': return store.save(book,lang,args.sid,args.entry);
       case 'pick': {
@@ -98,6 +108,7 @@ let packSupport = false;
 let pack = null;
 let rows = [];
 let pageVersion = 0;
+let loadingEntries = null;
 let generation = null;
 let hasShelf = false;
 let shelfBusy = true;
@@ -286,6 +297,12 @@ async function lookup(full) {
   const ready = preparedAnswer(selection, full) || (typeof cached === 'string' && cached.trim());
   answer.textContent = ready || 'Translating…';
   if (ready) return;
+  if(loadingEntries?.revision===pageVersion) {
+    await loadingEntries.task;
+    if(version!==requestVersion) return;
+    const meaning=preparedAnswer(selection,full);
+    if(meaning) {answer.textContent=meaning;return;}
+  }
   const instruction = full ? 'Translate the passage. Return only the translation.'
     : 'Give the contextual meaning or grammatical role of this individual word, including its contribution to an idiom. Return two short lines: contextual translation, then source-language dictionary form.';
   const prompt = instruction + ' Source: ' + languages[state.source] + '. Target: ' + languages[state.target]
@@ -478,7 +495,7 @@ function leavePack() {
 function openDocument(file) {
   return file.format === 'reader.book.1' ? enterPack(file) : openBook(file.name,file.text);
 }
-async function loadPack(info) {
+async function loadPack(info,openingRows) {
   stopTracking();
   const saved = bookmarkFor(info.book);
   if (info.book !== state.packId) stopGeneration();
@@ -489,10 +506,13 @@ async function loadPack(info) {
   state.hash = info.book; book = '';
   $('source').value = info.lang; $('source').disabled = true;
   $('packActions').hidden = false;
-  return renderPack();
+  return renderPack(state.page,openingRows,true);
 }
-async function enterPack(info) {
-  if (!await loadPack(info)) return;
+function cacheReadingPage() {
+  if(store && pack && rows.length) store.opening.save(pack,state.target,state.page,rows).catch(()=>{});
+}
+async function enterPack(info,openingRows) {
+  if (!await loadPack(info,openingRows)) return;
   if (info.notice) $('status').textContent = info.notice;
   showView('reader');
   save();
@@ -500,13 +520,18 @@ async function enterPack(info) {
   if (!generation && job && job.book === info.book && job.lang === state.target)
     preparePage(job, true).catch(report);
 }
-async function renderPack(page = state.page) {
+async function renderPack(page = state.page,openingRows,opening=false) {
   const revision = ++pageVersion;
   const active = pack, lang = state.target;
   dismiss();
+  const deferEntries=opening && !openingRows && store?.openSource?.book===active.book && !store.saving
+    && store.openTranslation?.path!==filename(active.book,lang)
+    && !(state.translatedBook===active.book && state.translatedLanguage===lang);
   let result;
   try {
-    result = await readerAction('page',{book:active.book,page,lang,withIllustrations:true});
+    if(openingRows) result=openingRows;
+    else if(deferEntries) result=store.readPage(store.openSource.db,null,page,true);
+    else result=await readerAction('page',{book:active.book,page,lang,withIllustrations:true});
   } catch (error) {
     if (revision !== pageVersion) return false;
     $('pageNumber').value = state.page + 1;
@@ -521,6 +546,15 @@ async function renderPack(page = state.page) {
   $('title').textContent=active.title;
   updatePageControls(active.pages);
   updateProgress();
+  if(deferEntries) {
+    const task=readerAction('page',{book:active.book,page,lang}).then(updated=>{
+      if(revision!==pageVersion) return;
+      mergePageEntries(updated);
+      cacheReadingPage();
+    }).catch(error=>{if(revision===pageVersion) report(error);});
+    loadingEntries={revision,task};
+    task.finally(()=>{if(loadingEntries?.revision===revision) loadingEntries=null;});
+  } else if(!openingRows) cacheReadingPage();
   return true;
 }
 function setReadingVersion() {
@@ -627,7 +661,7 @@ async function openNavigation() {
   try {
     if(!active.chapters) {
       list.textContent='Loading chapters…';
-      const index=await legacyChapters(active,revision);
+      const index=store ? await readerAction('chapters',{book:active.book}) : await legacyChapters(active,revision);
       if(!index || revision!==panelRevision || pack!==active) return;
       active.chapters=index;
     }
@@ -750,7 +784,7 @@ async function preparePage(job, resume = false) {
       if (task.cancelled) return;
       if (pack?.book===job.book && state.page===job.page && state.target===job.lang) {
         const shown = rows.find(r=>r.id===row.id);
-        if (shown) shown.entry=entry;
+        if (shown) {shown.entry=entry;cacheReadingPage();}
         updateProgress();
       }
     }
@@ -898,6 +932,7 @@ async function refreshShelf(refresh=false) {
   }
 }
 let readingSession=null;
+let openRequest=0;
 function rememberEdition(slug,bookId) {
   const editions=state.catalogueEditions ??= {};
   const old=Object.hasOwn(editions,slug) && editions[slug];
@@ -928,6 +963,10 @@ async function applyBookUpdate(session,change) {
   const revision=pageVersion;
   const updated=await readerAction('page',{book:pack.book,page:state.page,lang:session.lang});
   if(!current() || revision!==pageVersion) return;
+  mergePageEntries(updated);
+  cacheReadingPage();
+}
+function mergePageEntries(updated) {
   const entries=new Map(updated.map(row=>[row.id,row.entry]));
   for(const row of rows) row.entry=entries.get(row.id);
   if(setReadingVersion()) {
@@ -943,9 +982,12 @@ async function checkReadingUpdates(session) {
   if(!session || session.checking || document.hidden) return;
   session.checking=true;
   try {
+    if(session.needsSource) await ensureReadingSource(session);
+    if(readingSession!==session) return;
     session.copy=await catalogue.update(session.slug,session.lang,session.copy,change=>applyBookUpdate(session,change));
     session.lastCheck=Date.now();
-  } catch {
+  } catch(error) {
+    if(readingSession===session && session.needsSource) $('status').textContent='Opening page available. The rest of the book could not download. '+error.message;
     // Keep the open page usable offline. Retry on reconnect, resume or the next open.
     session.lastCheck=0;
   } finally {session.checking=false;}
@@ -955,22 +997,80 @@ document.addEventListener('visibilitychange',()=>{
   if(!document.hidden && readingSession && Date.now()-readingSession.lastCheck>60_000)
     checkReadingUpdates(readingSession);
 });
+async function ensureReadingSource(session) {
+  if(!session.sourceTask) {
+    session.sourceTask=(async()=>{
+      const info=await catalogue.open(session.slug,session.lang);
+      const previous=session.book;
+      session.book=info.book;
+      session.copy=info;
+      session.needsSource=false;
+      if(readingSession===session && pack?.book===previous) {
+        if(previous!==info.book || session.previewHash!==info.sourceHash) {
+          const page=requestedPage;
+          stopTracking();
+          rememberEdition(session.slug,info.book);
+          await enterPack(info);
+          if(Number.isInteger(page) && readingSession===session) await goToPage(Math.min(page,info.pages-1));
+        } else {
+          Object.assign(pack,info);
+          $('status').textContent='';
+          cacheReadingPage();
+        }
+      }
+    })().catch(error=>{session.sourceTask=null;throw error;});
+  }
+  return session.sourceTask;
+}
 async function selectBook(item) {
   if(shelfBusy)return;
+  const request=++openRequest,lang=state.target;
   shelfRequest++;
   setShelfBusy(true);shelfMessage('Opening book…');
   try {
     if(item.text) {await openBook(state.name,book); return;}
-    const info=item.local?await readerAction('info',{book:item.local}):await readerAction('download',{slug:item.id});
-    if(!store && !item.local) chooseTarget('en');
-    if(store && item.id) rememberEdition(item.id,info.book);
-    await enterPack(info);
-    if(store && item.id && !$('reader').hidden && pack?.book===info.book) {
-      readingSession={slug:item.id,lang:state.target,copy:info,lastCheck:0};
-      checkReadingUpdates(readingSession);
+    const listed=store && item.id ? catalogue.item(item.id) : null;
+    const bookId=listed ? catalogue.installedBook(item.id) : item.local;
+    let opening,warmInfo,needsSource=false;
+    if(store && bookId && store.openSource?.book===bookId && store.openTranslation?.path===filename(bookId,lang) && !store.saving)
+      warmInfo=await store.describe(bookId,false);
+    else if(store && bookId) {
+      const previousEdition=listed && state.catalogueEditions?.[item.id];
+      const page=bookmarkFor(previousEdition && previousEdition!==bookId ? previousEdition : bookId).page;
+      opening=await store.opening.read(bookId,lang,page);
+      if(!opening && listed?.bookId===bookId && page===0) {
+        opening=await catalogue.firstPage(listed,lang);
+        needsSource=!!opening;
+      }
     }
-  } catch(error){shelfMessage(error.message);}
-  finally{setShelfBusy(false);}
+    if(request!==openRequest) return;
+    const info=warmInfo || opening?.info || (item.local ? await readerAction('info',{book:item.local})
+      : await readerAction('download',{slug:item.id}));
+    if(request!==openRequest) return;
+    if(!store && !item.local) chooseTarget('en');
+    let session=null;
+    if(listed) {
+      rememberEdition(item.id,info.book);
+      session={slug:item.id,previewHash:listed.source.sha256,book:info.book,lang,copy:catalogue.snapshot(info,lang),needsSource,lastCheck:0};
+      readingSession=session;
+    }
+    await enterPack(info,opening?.rows);
+    if(request!==openRequest || $('reader').hidden || pack!==info) return;
+    if(needsSource) $('status').textContent='Downloading the rest of the book…';
+    // Yield a frame before loading the rest of a saved book or checking Drive.
+    requestAnimationFrame(()=>setTimeout(async()=>{
+      if(request!==openRequest || pack!==info) return;
+      if(opening && !needsSource) {
+        await serialized(async()=>{
+          if(request!==openRequest) return;
+          await store.source(info.book);
+          if(request===openRequest) await store.translations(info.book,lang);
+        }).catch(()=>{}); // Navigation can retry a failed background read.
+      }
+      if(session && readingSession===session) checkReadingUpdates(session);
+    },0));
+  } catch(error){if(request===openRequest) shelfMessage(error.message);}
+  finally{if(request===openRequest) setShelfBusy(false);}
 }
 $('refreshBooks').onclick=()=>refreshShelf(true);
 $('importBook').onclick=async()=>{
@@ -984,6 +1084,7 @@ $('importBook').onclick=async()=>{
   } finally {setShelfBusy(false);}
 };
 function returnToShelf() {
+  openRequest++; pageVersion++; setShelfBusy(false);
   showView('shelf'); refreshShelf();
 }
 function closeReaderOverlay() {
