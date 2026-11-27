@@ -162,7 +162,7 @@ function stopTracking() {
   readingPosition = null;
 }
 function trackPage(offset) {
-  if ($('reader').hidden || !navigationPanel.hidden || !state.hash) return;
+  if ($('reader').hidden || !navigationPanel.inert || !state.hash) return;
   window.scrollTo(0, Number.isFinite(offset) ? offset : 0);
   readingPosition = { page:state.page, scrollY:Math.max(0, Math.round(window.scrollY)) };
   state.bookmarks[state.hash] = readingPosition;
@@ -375,38 +375,76 @@ $('shelfTarget').onchange=()=>{
 };
 let navigation=Promise.resolve();
 let requestedPage=null;
-function goToPage(page,chapterStart) {
+let pageTurn=null;
+function goToPage(page,chapterStart,step=0) {
   const total = pack?.pages ?? pages.length;
   if (!Number.isInteger(page) || page < 0 || page >= total) return Promise.resolve();
+  cancelPageTurn();
   closeNavigation();
   requestedPage=page;
-  const move=moveToPage(page,chapterStart).finally(()=>{
+  const move=moveToPage(page,chapterStart,step).finally(()=>{
     if(navigation===move) requestedPage=null;
   });
   navigation=move;
   return move;
 }
-async function moveToPage(page, chapterStart) {
-  if (pack) {
-    if (!await renderPack(page)) return;
-  } else {
+function cancelPageTurn() {
+  pageTurn?.skipTransition();
+  for(const animation of $('reader').getAnimations()) animation.cancel();
+}
+async function moveToPage(page,chapterStart,step) {
+  // Keep the current page readable while a SQLite page or catalogue download is pending.
+  const draw=pack ? await preparePackPage(page) : ()=>{
     stopTracking();
-    state.page = page;
+    state.page=page;
     render();
+    return true;
+  };
+  const stillRequested=()=>requestedPage===page && !$('reader').hidden && navigationPanel.inert;
+  if(!draw || !stillRequested()) return;
+  return animatePageTurn(step,()=>{
+    if(!stillRequested() || !draw()) return false;
+    trackPage(0);
+    if(chapterStart && rows[0]?.id!==chapterStart.id) {
+      $('sentence-'+chapterStart.id)?.scrollIntoView({block:'start'});
+      recordScroll();
+    }
+    save();
+    return true;
+  });
+}
+async function animatePageTurn(step,display) {
+  if(!step || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    display();
+    return;
   }
-  trackPage(0);
-  if (chapterStart && rows[0]?.id!==chapterStart.id) {
-    $('sentence-'+chapterStart.id)?.scrollIntoView({block:'start'});
-    recordScroll();
+  if(!document.startViewTransition) {
+    if(display()) $('reader').animate(
+      [{transform:'translateX('+step*100+'vw)'},{transform:'none'}],
+      {duration:240,easing:'ease-out'}
+    );
+    return;
   }
-  save();
+  // Animate viewport snapshots so illustrations and the old scroll offset travel with the text.
+  const root=document.documentElement;
+  root.dataset.pageTurn=step>0 ? 'forward' : 'backward';
+  const transition=document.startViewTransition(display);
+  pageTurn=transition;
+  transition.ready.catch(()=>{}); // A newer gesture can skip this animation before capture.
+  const clear=()=>{
+    if(pageTurn!==transition) return;
+    pageTurn=null;
+    delete root.dataset.pageTurn;
+  };
+  transition.finished.then(clear,clear);
+  await transition.updateCallbackDone;
 }
 $('pageJump').onsubmit = event => {
   event.preventDefault();
   $('pageNumber').blur();
   goToPage($('pageNumber').valueAsNumber - 1).catch(report);
 };
-function turnPage(step) { goToPage((requestedPage ?? state.page) + step).catch(report); }
+function turnPage(step) { goToPage((requestedPage ?? state.page) + step,undefined,step).catch(report); }
 for (const [id, step] of [['prev',-1],['next',1]]) $(id).onclick = () => turnPage(step);
 function closeTranslation() {
   const button = selection?.button;
@@ -426,7 +464,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key !== 'Escape') return;
-  if (!navigationPanel.hidden) closeNavigation();
+  if (!navigationPanel.inert) closeNavigation();
   else if (selection) closeTranslation();
 });
 async function init() {
@@ -520,7 +558,11 @@ async function enterPack(info,openingRows) {
   if (!generation && job && job.book === info.book && job.lang === state.target)
     preparePage(job, true).catch(report);
 }
-async function renderPack(page = state.page,openingRows,opening=false) {
+async function renderPack(page=state.page,openingRows,opening=false) {
+  const draw=await preparePackPage(page,openingRows,opening);
+  return draw && draw();
+}
+async function preparePackPage(page,openingRows,opening=false) {
   const revision = ++pageVersion;
   const active = pack, lang = state.target;
   dismiss();
@@ -537,25 +579,27 @@ async function renderPack(page = state.page,openingRows,opening=false) {
     $('pageNumber').value = state.page + 1;
     throw error;
   }
-  if (revision !== pageVersion) return false;
-  stopTracking();
-  state.page = page;
-  dismiss();
-  rows = result;
-  drawPackPassage();
-  $('title').textContent=active.title;
-  updatePageControls(active.pages);
-  updateProgress();
-  if(deferEntries) {
-    const task=readerAction('page',{book:active.book,page,lang}).then(updated=>{
-      if(revision!==pageVersion) return;
-      mergePageEntries(updated);
-      cacheReadingPage();
-    }).catch(error=>{if(revision===pageVersion) report(error);});
-    loadingEntries={revision,task};
-    task.finally(()=>{if(loadingEntries?.revision===revision) loadingEntries=null;});
-  } else if(!openingRows) cacheReadingPage();
-  return true;
+  return ()=>{
+    if (revision !== pageVersion) return false;
+    stopTracking();
+    state.page = page;
+    dismiss();
+    rows = result;
+    drawPackPassage();
+    $('title').textContent=active.title;
+    updatePageControls(active.pages);
+    updateProgress();
+    if(deferEntries) {
+      const task=readerAction('page',{book:active.book,page,lang}).then(updated=>{
+        if(revision!==pageVersion) return;
+        mergePageEntries(updated);
+        cacheReadingPage();
+      }).catch(error=>{if(revision===pageVersion) report(error);});
+      loadingEntries={revision,task};
+      task.finally(()=>{if(loadingEntries?.revision===revision) loadingEntries=null;});
+    } else if(!openingRows) cacheReadingPage();
+    return true;
+  };
 }
 function setReadingVersion() {
   const canReadTranslation=rows.length>0 && rows.every(row=>row.entry?.translation);
@@ -608,14 +652,14 @@ let poppingPanelEntry=false;
 function hideNavigation() {
   ++panelRevision;
   const hadFocus=navigationPanel.contains(document.activeElement);
-  navigationPanel.hidden=true;
-  document.querySelector('main').hidden=false;
+  navigationPanel.inert=true;
+  document.querySelector('main').inert=false;
   const saved=bookmarkFor(state.hash);
   trackPage(saved.page===state.page ? saved.scrollY : 0);
   if(hadFocus) $('title').focus({preventScroll:true});
 }
 function closeNavigation() {
-  if(navigationPanel.hidden) return;
+  if(navigationPanel.inert) return;
   hideNavigation();
   if(history.state?.languageControls && !poppingPanelEntry) {
     poppingPanelEntry=true;
@@ -640,7 +684,8 @@ async function legacyChapters(active,revision) {
   return chapters;
 }
 async function openNavigation() {
-  if(!navigationPanel.hidden || $('reader').hidden) return;
+  if(!navigationPanel.inert || $('reader').hidden) return;
+  cancelPageTurn();
   dismiss();
   const revision=++panelRevision,active=pack,list=$('chapterList');
   list.replaceChildren();
@@ -653,9 +698,9 @@ async function openNavigation() {
   }
   if(!poppingPanelEntry && history.state?.languageControls!==state.hash) pushPanelEntry();
   stopTracking();
-  document.querySelector('main').hidden=true;
-  navigationPanel.hidden=false;
-  window.scrollTo(0,0);
+  document.querySelector('main').inert=true;
+  navigationPanel.inert=false;
+  navigationPanel.scrollTop=0;
   $('navigationClose').focus({preventScroll:true});
   if($('chapterSection').hidden) return;
   try {
@@ -677,7 +722,7 @@ async function openNavigation() {
     }
     if(current) {
       current.setAttribute('aria-current','location');
-      window.scrollTo(0,current.getBoundingClientRect().top-list.getBoundingClientRect().top);
+      navigationPanel.scrollTop=current.offsetTop-list.offsetTop;
     }
   } catch(error) {if(revision===panelRevision) list.textContent=error.message;}
 }
@@ -688,7 +733,7 @@ function pullWithWheel(event) {
   const now=event.timeStamp;
   if(now-lastWheel>250) wheelDistance=0;
   lastWheel=now;
-  if(!navigationPanel.hidden || $('imageViewer').open || event.ctrlKey || window.scrollY>1 ||
+  if(!navigationPanel.inert || $('imageViewer').open || event.ctrlKey || window.scrollY>1 ||
      event.deltaY>=0 || Math.abs(event.deltaX)>=-event.deltaY) {
     wheelDistance=0;
     return;
@@ -704,10 +749,17 @@ function pullWithWheel(event) {
 let drag=null;
 document.addEventListener('touchstart',event=>{
   drag=null;
-  if($('reader').hidden || !navigationPanel.hidden || $('imageViewer').open || event.touches.length!==1 ||
-     window.visualViewport?.scale>1 || !window.getSelection().isCollapsed ||
-     event.target.closest('input,select,a,#popup,button:not(.passageWord):not(.illustration)')) return;
+  if($('reader').hidden || $('imageViewer').open || event.touches.length!==1 ||
+     window.visualViewport?.scale>1 || !window.getSelection().isCollapsed) return;
   const {clientX:x,clientY:y}=event.touches[0];
+  if(!navigationPanel.inert) {
+    // A fresh upward pull at the end dismisses the controls. Other drags scroll the chapters.
+    if(navigationPanel.contains(event.target) && !event.target.closest('input') &&
+       navigationPanel.scrollTop+navigationPanel.clientHeight>=navigationPanel.scrollHeight-1)
+      drag={x,y,axis:null,panel:true};
+    return;
+  }
+  if(event.target.closest('input,select,a,#popup,button:not(.passageWord):not(.illustration)')) return;
   drag={x,y,axis:null,topY:window.scrollY<=1 ? y : null};
 },{passive:true});
 function moveReaderTouch(event) {
@@ -716,6 +768,10 @@ function moveReaderTouch(event) {
   const {clientX,clientY}=event.touches[0];
   const dx=Math.abs(clientX-drag.x),dy=Math.abs(clientY-drag.y);
   if(!drag.axis && Math.max(dx,dy)>=12) drag.axis=dx>dy ? 'x' : 'y';
+  if(drag.panel) {
+    if(event.cancelable && drag.axis==='y' && drag.y-clientY>1.5*dx) event.preventDefault();
+    return;
+  }
   if(window.scrollY>1) drag.topY=null;
   else if(drag.topY===null || clientY<drag.topY) drag.topY=clientY;
   if(event.cancelable && ((drag.axis==='x' && dx>1.5*dy) ||
@@ -726,12 +782,20 @@ function endReaderTouch(event) {
   const start=drag;
   drag=null;
   if(!start || event.touches.length || !window.getSelection().isCollapsed || $('reader').hidden ||
-     !navigationPanel.hidden || $('imageViewer').open || window.visualViewport?.scale>1) return;
+     $('imageViewer').open || window.visualViewport?.scale>1) return;
   const {clientX,clientY}=event.changedTouches[0];
   const dx=clientX-start.x,dy=clientY-start.y;
+  if(start.panel) {
+    if(!navigationPanel.inert && start.axis!=='x' && -dy>=64 && -dy>1.5*Math.abs(dx)) {
+      if(event.cancelable) event.preventDefault();
+      closeNavigation();
+    }
+    return;
+  }
+  if(!navigationPanel.inert) return;
   if(start.axis!=='y' && Math.abs(dx)>=60 && Math.abs(dx)>1.5*Math.abs(dy)) {
     if(event.cancelable) event.preventDefault();
-    turnPage(dx>0 ? 1 : -1);
+    turnPage(dx<0 ? 1 : -1);
   } else if(start.axis!=='x' && window.scrollY<=1 && start.topY!==null &&
             clientY-start.topY>=64 && dy>1.5*Math.abs(dx)) {
     if(event.cancelable) event.preventDefault();
@@ -845,6 +909,7 @@ function showView(id,updateHistory=true) {
     document.removeEventListener('touchend',endReaderTouch);
   }
   requestedPage=null;
+  cancelPageTurn();
   closeNavigation();
   if (id !== 'reader') readingSession=null;
   if (id !== 'reader' && !$('reader').hidden) pageVersion++;
@@ -1089,7 +1154,7 @@ function returnToShelf() {
 }
 function closeReaderOverlay() {
   if($('imageViewer').open) $('imageViewer').close();
-  else if(!navigationPanel.hidden) closeNavigation();
+  else if(!navigationPanel.inert) closeNavigation();
   else return false;
   return true;
 }
@@ -1097,11 +1162,11 @@ function readerBack() { if(!closeReaderOverlay()) returnToShelf(); }
 window.addEventListener('popstate',event=>{
   if(poppingPanelEntry) {
     poppingPanelEntry=false;
-    if(!navigationPanel.hidden) pushPanelEntry();
+    if(!navigationPanel.inert) pushPanelEntry();
     return;
   }
   if(event.state?.languageControls===state.hash && !$('reader').hidden) {openNavigation(); return;}
-  if(!navigationPanel.hidden) {hideNavigation(); return;}
+  if(!navigationPanel.inert) {hideNavigation(); return;}
   if(hasShelf) return;
   if(closeReaderOverlay()) {history.pushState({languageView:'reader'},''); return;}
   const view=event.state?.languageView;

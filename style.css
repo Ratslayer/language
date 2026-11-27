@@ -59,14 +59,27 @@ nav { margin-top: 1.5rem; }
 .shelfControls { display:flex; flex-wrap:wrap; gap:.7rem; align-items:baseline; }
 .shelfControls button { font-size:.88rem; }
 html:has(#reader:not([hidden])) { overscroll-behavior:none; }
+main:has(#reader:not([hidden])) { overflow-x:clip; }
 #reader { touch-action:pan-y pinch-zoom; }
-body:has(> #readerNavigation:not([hidden])) { background:#fffdf7; }
+html:has(#readerNavigation:not([inert])) { overflow:hidden; }
 #readerNavigation {
-  min-height:100vh;
+  position:fixed; inset:0; z-index:2; overflow-y:auto; overscroll-behavior:contain;
   padding:0 1rem max(.75rem,env(safe-area-inset-bottom));
   padding-inline:max(1rem,env(safe-area-inset-left)) max(1rem,env(safe-area-inset-right));
   background:#fffdf7;
 }
+#readerNavigation[inert] { visibility:hidden; transform:translateY(-100%); }
+@media (prefers-reduced-motion:no-preference) {
+  #readerNavigation { transition:transform 240ms ease-in-out, visibility 0s; }
+  #readerNavigation[inert] { transition-delay:0s,240ms; }
+}
+html[data-page-turn="forward"] { --turn-exit:-100%; --turn-enter:100%; }
+html[data-page-turn="backward"] { --turn-exit:100%; --turn-enter:-100%; }
+html[data-page-turn]::view-transition { pointer-events:none; }
+html[data-page-turn]::view-transition-old(root) { animation:turn-out 240ms ease-in-out both; }
+html[data-page-turn]::view-transition-new(root) { animation:turn-in 240ms ease-in-out both; }
+@keyframes turn-out { to { transform:translateX(var(--turn-exit)); } }
+@keyframes turn-in { from { transform:translateX(var(--turn-enter)); } }
 .navigationControls { position:sticky; top:0; z-index:1; background:#fffdf7; padding:max(.75rem,env(safe-area-inset-top)) 0 .5rem; }
 .navigationHeader { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:.5rem; }
 @media (max-height:26rem) {
