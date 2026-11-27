@@ -44,8 +44,11 @@
     <span id="popup" role="region" lang="en" dir="ltr" aria-label="Translation" hidden>
       <span class="translationHeading">
         <strong id="word" dir="auto"></strong>
+        <button id="pronounce" type="button" aria-label="Pronounce word" title="Pronounce word" hidden>🔊</button>
         <button id="close" aria-label="Close translation">×</button>
       </span>
+      <span id="speechStatus" role="status"></span>
+      <button id="installVoice" type="button" hidden></button>
       <span id="answer" role="status" dir="auto"></span>
       <button id="sentence">Translate sentence</button>
     </span>

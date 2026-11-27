@@ -36,7 +36,9 @@ nav { margin-top: 1.5rem; }
 }
 .translationHeading { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
 #word { overflow-wrap: anywhere; }
-#close { flex: none; padding: .25rem .65rem; }
+#pronounce { flex: none; min-width: 44px; min-height: 44px; padding: .25rem; }
+#close { flex: none; margin-inline-start: auto; padding: .25rem .65rem; }
+#speechStatus:not(:empty) { display: block; margin-block: .25rem; }
 #answer { display: block; margin: .25rem 0; white-space: pre-line; overflow-wrap: anywhere; }
 #sentence { margin-top: .15rem; font-size: .85rem; }
 [hidden] { display: none !important; }

@@ -93,6 +93,7 @@ async function pickDocument(action) {
 const languages = { de:'German', en:'English', ru:'Russian', fr:'French', es:'Spanish',
   it:'Italian', pt:'Portuguese', nl:'Dutch', sv:'Swedish', pl:'Polish', uk:'Ukrainian',
   tr:'Turkish', ar:'Arabic', he:'Hebrew', hi:'Hindi', ja:'Japanese', zh:'Chinese', ko:'Korean' };
+const pronunciation = pronunciationControl($('pronounce'), $('speechStatus'), $('installVoice'), bridge ? call : null);
 for (const id of ['source', 'target', 'shelfTarget']) {
   $(id).replaceChildren(...Object.entries(languages).map(([code,name])=>
     new Option(code==='ru' ? 'Русский (Russian)' : name, code, false, code==='en')));
@@ -214,6 +215,7 @@ function paginate() {
   state.page = Math.min(Math.max(0, state.page || 0), Math.max(0, pages.length - 1));
 }
 function dismiss() {
+  pronunciation.clear();
   selection?.button.classList.remove('active');
   selection = null;
   requestVersion++;
@@ -275,6 +277,7 @@ function wordButton(text, context) {
     button.classList.add('active');
     button.after(popup);
     popup.hidden = false;
+    pronunciation.select(text, state.source, languages[state.source] || state.source);
     lookup(false);
     popup.scrollIntoView({ block:'nearest', inline:'nearest' });
   };
@@ -293,6 +296,7 @@ async function lookup(full) {
   const { sentence, index, button } = selection;
   const word = button.textContent;
   $('word').textContent = full ? 'Sentence' : word;
+  if (full) pronunciation.clear();
   $('word').lang = full ? 'en' : state.source;
   $('sentence').hidden = full;
   const answer = $('answer');
