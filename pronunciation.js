@@ -23,11 +23,22 @@ function pronunciationControl(button, status, install, callHost) {
     install.hidden = true;
     try {
       if (callHost) {
-        const result = await callHost('speech.speak', {text, language});
-        if (playback === attempt && result === 'missing-voice') {
-          status.textContent = 'An offline ' + name + ' voice is needed.';
-          install.textContent = 'Install ' + name + ' voice';
-          install.hidden = false;
+        // Imported books can contain passages longer than Android's 4,000 UTF-16 unit limit.
+        let remaining = text;
+        while (remaining && playback === attempt) {
+          let end = remaining.length;
+          if (end > 4000) {
+            end = remaining.lastIndexOf(' ', 4000);
+            if (end < 1) end = /[\uD800-\uDBFF]/.test(remaining[3999]) ? 3999 : 4000;
+          }
+          const result = await callHost('speech.speak', {text:remaining.slice(0,end), language});
+          if (result === 'missing-voice' && playback === attempt) {
+            status.textContent = 'An offline ' + name + ' voice is needed.';
+            install.textContent = 'Install ' + name + ' voice';
+            install.hidden = false;
+          }
+          if (result !== 'spoken') break;
+          remaining = remaining.slice(end).trimStart();
         }
       } else {
         synth.cancel();
@@ -56,9 +67,10 @@ function pronunciationControl(button, status, install, callHost) {
   };
 
   return {
-    select(text, language, name) {
+    select(text, language, name, fullSentence = false) {
       selected = {text, language, name};
-      button.setAttribute('aria-label', 'Pronounce ' + text);
+      button.title = fullSentence ? 'Pronounce sentence' : 'Pronounce word';
+      button.setAttribute('aria-label', fullSentence ? button.title : 'Pronounce ' + text);
       button.hidden = !(callHost || (synth && window.SpeechSynthesisUtterance));
     },
     clear

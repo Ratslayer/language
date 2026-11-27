@@ -37,3 +37,27 @@ test('sends the exact source word and ignores replies for superseded playback', 
   await next;
   assert.equal(button.hidden, true);
 });
+
+test('voices long sentences in order and drops pending chunks when selection changes', async () => {
+  const requests = [];
+  const call = (method, data) => new Promise(resolve => requests.push({method, data, resolve}));
+  const button = {setAttribute() {}};
+  const speech = control(button, {}, {}, call);
+  const first = 'a'.repeat(3999), last = '¿Sí?';
+  speech.select(first + ' ' + last, 'es', 'Spanish', true);
+  const whole = button.onclick();
+  assert.equal(requests[0].data.text, first);
+  requests[0].resolve('spoken');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests[1].data.text, last);
+  requests[1].resolve('spoken');
+  await whole;
+
+  const again = button.onclick();
+  speech.clear();
+  speech.select(last, 'es', 'Spanish');
+  requests[2].resolve('spoken');
+  requests[3].resolve(true);
+  await again;
+  assert.deepEqual(requests.map(r => r.method), ['speech.speak', 'speech.speak', 'speech.speak', 'speech.stop']);
+});

@@ -217,6 +217,7 @@ function paginate() {
 function dismiss() {
   pronunciation.clear();
   selection?.button.classList.remove('active');
+  selection?.button.parentElement.classList.remove('activeSentence');
   selection = null;
   requestVersion++;
   popup.hidden = true;
@@ -259,9 +260,11 @@ function fillTextPassage(article,page) {
   article.replaceChildren();
   article.lang = state.source;
   for (const sentence of pages[page] || []) {
+    const span = document.createElement('span');
+    article.append(span);
     for (const part of words.segment(sentence)) {
-      if (!part.isWordLike) { article.append(part.segment); continue; }
-      article.append(wordButton(part.segment, { sentence, index:part.index }));
+      if (!part.isWordLike) { span.append(part.segment); continue; }
+      span.append(wordButton(part.segment, { sentence, index:part.index }));
     }
   }
 }
@@ -274,42 +277,54 @@ function wordButton(text, context) {
     flushScroll();
     dismiss();
     selection = { ...context, button };
-    button.classList.add('active');
-    button.after(popup);
-    popup.hidden = false;
-    pronunciation.select(text, state.source, languages[state.source] || state.source);
-    lookup(false);
-    popup.scrollIntoView({ block:'nearest', inline:'nearest' });
+    selectScope(false);
   };
   return button;
 }
-function preparedAnswer({ row, wordId }, full) {
+function selectScope(full) {
+  const {button, sentence} = selection;
+  const span = button.parentElement;
+  const toggle = $('sentence');
+  const keepFocus = document.activeElement === toggle;
+  selection.full = full;
+  button.classList.toggle('active', !full);
+  span.classList.toggle('activeSentence', full);
+  (full ? span : button).after(popup);
+  popup.hidden = false;
+  $('word').textContent = full ? 'Sentence' : button.textContent;
+  $('word').lang = full ? 'en' : state.source;
+  toggle.textContent = full ? 'Word' : 'Sentence';
+  pronunciation.clear();
+  pronunciation.select(full ? sentence.trim() : button.textContent, state.source,
+    languages[state.source] || state.source, full);
+  lookup();
+  if (keepFocus) toggle.focus({preventScroll:true});
+  popup.scrollIntoView({block:'nearest', inline:'nearest'});
+}
+function preparedAnswer({ row, wordId, sentence, full }) {
   const entry = row?.entry;
-  if (full) return typeof entry?.translation === 'string' ? entry.translation.trim() : '';
+  if (full) return typeof entry?.translation === 'string' && sentence.trim() === row.text.trim()
+    ? entry.translation.trim() : '';
   if (!Array.isArray(entry?.groups)) return '';
   const group = entry.groups.find(g => Array.isArray(g?.[0]) && g[0].includes(wordId));
   if (typeof group?.[2] !== 'string' || !group[2].trim()) return '';
   return [group[2], group[1]].filter(v => typeof v === 'string' && v.trim()).join('\n');
 }
-async function lookup(full) {
+async function lookup() {
   const version = ++requestVersion;
-  const { sentence, index, button } = selection;
+  const { sentence, index, button, full } = selection;
   const word = button.textContent;
-  $('word').textContent = full ? 'Sentence' : word;
-  if (full) pronunciation.clear();
-  $('word').lang = full ? 'en' : state.source;
-  $('sentence').hidden = full;
   const answer = $('answer');
   answer.lang = state.target;
   const key = JSON.stringify([state.source, state.target, sentence, full ? -1 : index]);
   const cached = state.cache.find(entry => entry[0] === key)?.[1];
-  const ready = preparedAnswer(selection, full) || (typeof cached === 'string' && cached.trim());
+  const ready = preparedAnswer(selection) || (typeof cached === 'string' && cached.trim());
   answer.textContent = ready || 'Translating…';
   if (ready) return;
   if(loadingEntries?.revision===pageVersion) {
     await loadingEntries.task;
     if(version!==requestVersion) return;
-    const meaning=preparedAnswer(selection,full);
+    const meaning=preparedAnswer(selection);
     if(meaning) {answer.textContent=meaning;return;}
   }
   const instruction = full ? 'Translate the passage. Return only the translation.'
@@ -509,7 +524,7 @@ function closeTranslation() {
   button?.scrollIntoView({ block:'nearest' });
 }
 $('close').onclick = closeTranslation;
-$('sentence').onclick = () => lookup(true);
+$('sentence').onclick = () => selectScope(!selection.full);
 document.addEventListener('click', e => {
   if (selection && !e.target.closest('#popup, .passageWord')) dismiss();
 });
@@ -670,6 +685,7 @@ function drawPackPassage() {
 }
 function fillPackPassage(article,items,translated,deferred) {
   article.replaceChildren(); article.lang=translated ? state.target : pack.lang;
+  const sentences = new Intl.Segmenter(pack.lang, {granularity:'sentence'});
   let paragraph = null, lastPara = null;
   for (const row of items) {
     if (row.illustrations?.length) {
@@ -686,13 +702,21 @@ function fillPackPassage(article,items,translated,deferred) {
       anchor.textContent=row.entry.translation;
       continue;
     }
-    let pos = 0;
-    row.words.forEach(([start,length],wordId) => {
-      paragraph.append(row.text.slice(pos,start));
-      paragraph.append(wordButton(row.text.slice(start,start+length), { row, wordId, sentence:row.text, index:start }));
-      pos = start+length;
-    });
-    paragraph.append(row.text.slice(pos));
+    let wordId = 0, pos = 0;
+    for (const {segment:sentence, index:offset} of sentences.segment(row.text)) {
+      const end = offset + sentence.length;
+      const span = offset === 0 ? anchor : document.createElement('span');
+      if (offset) paragraph.append(span);
+      while (wordId < row.words.length && row.words[wordId][0] < end) {
+        const [start, length] = row.words[wordId];
+        span.append(row.text.slice(pos,start), wordButton(row.text.slice(start,start+length),
+          {row, wordId, sentence, index:start-offset}));
+        pos = start + length;
+        wordId++;
+      }
+      span.append(row.text.slice(pos,end));
+      pos = Math.max(pos,end);
+    }
   }
 }
 $('readingVersion').onclick=()=>{
@@ -1117,8 +1141,8 @@ function mergePageEntries(updated) {
     const offset=window.scrollY;
     drawPackPassage();
     trackPage(offset);
-  } else if(selection && preparedAnswer(selection,$('sentence').hidden)) {
-    lookup($('sentence').hidden);
+  } else if(selection && preparedAnswer(selection)) {
+    lookup();
   }
   updateProgress();
 }
