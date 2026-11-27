@@ -78,7 +78,7 @@ function chapterIndex(db) {
 }
 
 class ReaderStore {
-  constructor(SQL,files) { this.SQL=SQL; this.files=files; }
+  constructor(SQL,files) { this.SQL=SQL; this.files=files; this.opening=new OpeningPages(files); }
   async source(book) {
     if(this.openSource?.book===book) return this.openSource.db;
     const db=new this.SQL.Database(await this.files.read(filename(book)));
@@ -88,9 +88,9 @@ class ReaderStore {
     this.openSource={book,db};
     return db;
   }
-  async describe(book) {
+  async describe(book,withChapters=true) {
     const db=await this.source(book);
-    return {...metadata(db), pages:queryRows(db,'SELECT max(page)+1 AS n FROM sentences')[0].n, chapters:chapterIndex(db)};
+    return {...metadata(db), pages:queryRows(db,'SELECT max(page)+1 AS n FROM sentences')[0].n, ...(withChapters ? {chapters:chapterIndex(db)} : {})};
   }
   async translations(book,lang,create=false) {
     const path=filename(book,lang);
@@ -156,6 +156,7 @@ class ReaderStore {
       db.run('BEGIN');
       apply(db);
       db.run('COMMIT');
+      await this.opening.discard(book);
       await this.files.write(filename(book,lang),db.export());
       if(stage) {
         this.closeTranslations();
@@ -215,6 +216,7 @@ class ReaderStore {
       if(hasIllustrations(db)) validateIllustrations(db);
       const path=filename(info.book);
       if(expected || await this.files.size(path)<0) {
+        await this.opening.discard(info.book);
         await this.files.write(path,bytes);
         this.openSource?.db.close();
         this.openSource={book:info.book,db};

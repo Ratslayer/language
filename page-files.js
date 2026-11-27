@@ -1,6 +1,15 @@
 'use strict';
 function decodeBytes(encoded) {
-  return Uint8Array.from(atob(encoded), c=>c.charCodeAt(0));
+  if(Uint8Array.fromBase64) return Uint8Array.fromBase64(encoded);
+  const binary=atob(encoded),bytes=new Uint8Array(binary.length);
+  for(let i=0;i<bytes.length;i++) bytes[i]=binary.charCodeAt(i);
+  return bytes;
+}
+function encodeBytes(bytes) {
+  if(bytes.toBase64) return bytes.toBase64();
+  let binary='';
+  for(let pos=0;pos<bytes.length;pos+=8192) binary+=String.fromCharCode(...bytes.subarray(pos,pos+8192));
+  return btoa(binary);
 }
 async function loadSqlite() {
   const stream = new Blob([decodeBytes(sqliteGzip)]).stream().pipeThrough(new DecompressionStream('gzip'));
@@ -30,10 +39,7 @@ class PageFiles {
     try {
       for (let offset=0; offset<bytes.length || offset===0; offset+=192*1024) {
         const end=Math.min(bytes.length,offset+192*1024);
-        let binary='';
-        for(let pos=offset;pos<end;pos+=8192)
-          binary+=String.fromCharCode(...bytes.subarray(pos,Math.min(pos+8192,end)));
-        await this.call('files.write',{path:temp,offset,data:btoa(binary)});
+        await this.call('files.write',{path:temp,offset,data:encodeBytes(bytes.subarray(offset,end))});
       }
       await this.move(temp,path);
     } finally { await this.remove(temp); }
