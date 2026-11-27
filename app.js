@@ -189,6 +189,7 @@ function updatePageControls(total) {
   $('next').disabled = number >= total;
 }
 function paginate() {
+  clearTurnPages();
   pages = [];
   words = new Intl.Segmenter(state.source, { granularity:'word' });
   const sentences = new Intl.Segmenter(state.source, { granularity:'sentence' });
@@ -222,7 +223,7 @@ function dismiss() {
   if (popup.parentNode !== $('reader')) $('reader').append(popup);
 }
 const openImage=createImageViewer($('imageViewer'));
-function appendIllustrations(article, illustrations) {
+function appendIllustrations(article, illustrations, deferred) {
   for (const {width,height,mime,alt,data} of illustrations) {
     const canvas=document.createElement('canvas');
     canvas.width=width; canvas.height=height;
@@ -231,15 +232,17 @@ function appendIllustrations(article, illustrations) {
     button.setAttribute('aria-label','View '+label);
     button.setAttribute('aria-haspopup','dialog');
     button.append(canvas); article.append(button);
-    const decoded=createImageBitmap(new Blob([data],{type:mime})).then(bitmap=>{
+    let decoded;
+    const paint=()=>decoded ??= createImageBitmap(new Blob([data],{type:mime})).then(bitmap=>{
       try {
-        if(canvas.isConnected) canvas.getContext('2d').drawImage(bitmap,0,0,width,height);
+        canvas.getContext('2d').drawImage(bitmap,0,0,width,height);
       } finally { bitmap.close(); }
     }).catch(()=>{
-      if(button.isConnected) button.replaceWith(document.createTextNode('Could not display illustration. '+alt));
+      button.replaceWith(document.createTextNode('Could not display illustration. '+alt));
     });
+    if(deferred) deferred.push(paint); else paint();
     button.onclick=async()=>{
-      await decoded;
+      await paint();
       if(button.isConnected && !$('imageViewer').open) openImage(canvas,button,label);
     };
   }
@@ -247,18 +250,20 @@ function appendIllustrations(article, illustrations) {
 function render() {
   if (pack) { renderPack().catch(report); return; }
   dismiss();
-  const article = $('passage');
+  fillTextPassage($('passage'),state.page);
+  $('title').textContent = state.name;
+  $('readingVersion').hidden=true;
+  updatePageControls(pages.length);
+}
+function fillTextPassage(article,page) {
   article.replaceChildren();
   article.lang = state.source;
-  for (const sentence of pages[state.page] || []) {
+  for (const sentence of pages[page] || []) {
     for (const part of words.segment(sentence)) {
       if (!part.isWordLike) { article.append(part.segment); continue; }
       article.append(wordButton(part.segment, { sentence, index:part.index }));
     }
   }
-  $('title').textContent = state.name;
-  $('readingVersion').hidden=true;
-  updatePageControls(pages.length);
 }
 function wordButton(text, context) {
   const button = document.createElement('button');
@@ -359,7 +364,7 @@ $('file').onchange = async event => {
   } catch (error) { report(error); }
 };
 function chooseTarget(lang) {
-  if(state.target!==lang) stopGeneration();
+  if(state.target!==lang) {stopGeneration(); clearTurnPages();}
   state.target=lang;
   $('target').value=lang;
   $('shelfTarget').value=lang;
@@ -379,11 +384,57 @@ $('shelfTarget').onchange=()=>{
 };
 let navigation=Promise.resolve();
 let requestedPage=null;
-let pageTurn=null;
+const slider=new PageSlider($('reader'),$('pagePreview'));
+const turnPages=new Map();
+let warmRevision=0;
+function clearTurnPages() {
+  ++warmRevision;
+  turnPages.clear();
+  slider.reset();
+}
+function prepareTurnPage(page,idle=false) {
+  if(turnPages.has(page)) return turnPages.get(page);
+  const active=pack,textPages=pages,lang=state.target,deferred=[];
+  const item={page,title:state.name,total:active?.pages ?? pages.length,
+    paint(){for(const start of deferred.splice(0)) start();}};
+  turnPages.set(page,item);
+  // Let the first finger position reach the compositor before starting a cold read.
+  const start=idle ? Promise.resolve() : new Promise(resolve=>setTimeout(resolve,0));
+  item.ready=start.then(async()=>{
+    if(turnPages.get(page)!==item) return;
+    if(active) item.rows=await readerAction('page',{book:active.book,page,lang,withIllustrations:true});
+    if(turnPages.get(page)!==item || active!==pack || textPages!==pages) return;
+    const article=document.createElement('article');
+    article.className='readingPassage'; article.dir='auto';
+    article.setAttribute('aria-label','Reading text');
+    if(active) fillPackPassage(article,item.rows,readsTranslation(item.rows),deferred);
+    else fillTextPassage(article,page);
+    item.article=article;
+  });
+  item.ready.catch(()=>{if(turnPages.get(page)===item) turnPages.delete(page);});
+  return item;
+}
+function warmTurnPages() {
+  const revision=++warmRevision,page=state.page,total=pack?.pages ?? pages.length;
+  for(const key of turnPages.keys()) if(Math.abs(key-page)!==1) turnPages.delete(key);
+  // Speculative reads use spare time and never start a download to fill the cache.
+  const idle=window.requestIdleCallback?.bind(window) ?? (fn=>setTimeout(fn,40));
+  const warm=step=>{
+    if(revision!==warmRevision || $('reader').hidden || !navigationPanel.inert ||
+       drag || readingSession?.needsSource) return;
+    if(store && pack && (store.openSource?.book!==pack.book || store.saving ||
+       store.openTranslation?.path!==filename(pack.book,state.target))) return;
+    const next=page+step;
+    if(next>=0 && next<total) prepareTurnPage(next,true);
+    if(step===1) idle(()=>warm(-1));
+  };
+  idle(()=>warm(1));
+}
 function goToPage(page,chapterStart,step=0) {
-  const total = pack?.pages ?? pages.length;
-  if (!Number.isInteger(page) || page < 0 || page >= total) return Promise.resolve();
-  cancelPageTurn();
+  const total=pack?.pages ?? pages.length;
+  if(!Number.isInteger(page) || page<0 || page>=total) {slider.snapBack();return Promise.resolve();}
+  for(const key of turnPages.keys()) if(key!==page && Math.abs(key-state.page)>1) turnPages.delete(key);
+  if(!step || slider.animations.length) slider.reset();
   closeNavigation();
   requestedPage=page;
   const move=moveToPage(page,chapterStart,step).finally(()=>{
@@ -392,56 +443,57 @@ function goToPage(page,chapterStart,step=0) {
   navigation=move;
   return move;
 }
-function cancelPageTurn() {
-  pageTurn?.skipTransition();
-  for(const animation of $('reader').getAnimations()) animation.cancel();
-}
 async function moveToPage(page,chapterStart,step) {
-  // Keep the current page readable while a SQLite page or catalogue download is pending.
-  const draw=pack ? await preparePackPage(page) : ()=>{
+  const revision=++pageVersion;
+  const current=()=>revision===pageVersion && requestedPage===page && !$('reader').hidden && navigationPanel.inert;
+  let item;
+  do {
+    item=prepareTurnPage(page);
+    try { if(!item.article) await item.ready; }
+    catch(error) {
+      if(!current()) return;
+      slider.snapBack();
+      $('pageNumber').value=state.page+1;
+      throw error;
+    }
+    if(!current()) return;
+  } while(turnPages.get(page)!==item);
+  const oldPage=state.page;
+  const display=()=>{
     stopTracking();
+    dismiss();
+    const previous=$('passage');
+    previous.removeAttribute('id');
+    item.article.id='passage';
+    previous.replaceWith(item.article);
+    item.paint();
     state.page=page;
-    render();
-    return true;
-  };
-  const stillRequested=()=>requestedPage===page && !$('reader').hidden && navigationPanel.inert;
-  if(!draw || !stillRequested()) return;
-  return animatePageTurn(step,()=>{
-    if(!stillRequested() || !draw()) return false;
+    if(pack) {
+      rows=item.rows;
+      setReadingVersion();
+      updateProgress();
+      $('status').textContent='';
+    }
+    updatePageControls(item.total);
     trackPage(0);
     if(chapterStart && rows[0]?.id!==chapterStart.id) {
       $('sentence-'+chapterStart.id)?.scrollIntoView({block:'start'});
       recordScroll();
     }
-    save();
-    return true;
-  });
-}
-async function animatePageTurn(step,display) {
-  if(!step || matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    display();
-    return;
-  }
-  if(!document.startViewTransition) {
-    if(display()) $('reader').animate(
-      [{transform:'translateX('+step*100+'vw)'},{transform:'none'}],
-      {duration:240,easing:'ease-out'}
-    );
-    return;
-  }
-  // Animate viewport snapshots so illustrations and the old scroll offset travel with the text.
-  const root=document.documentElement;
-  root.dataset.pageTurn=step>0 ? 'forward' : 'backward';
-  const transition=document.startViewTransition(display);
-  pageTurn=transition;
-  transition.ready.catch(()=>{}); // A newer gesture can skip this animation before capture.
-  const clear=()=>{
-    if(pageTurn!==transition) return;
-    pageTurn=null;
-    delete root.dataset.pageTurn;
   };
-  transition.finished.then(clear,clear);
-  await transition.updateCallbackDone;
+  if(step && !slider.reduced.matches) slider.commit(step,oldPage,item,display);
+  else {slider.reset();display();}
+  warmTurnPages();
+  save();
+  if(pack) {
+    // A large illustrated bookmark can take a frame or more to encode.
+    // Start that work after the slide, using only the latest displayed page.
+    const displayedRows=rows, lang=state.target;
+    const cache=()=>{if(rows===displayedRows && state.target===lang && state.page===page) cacheReadingPage();};
+    const settling=slider.animations.at(-1);
+    if(settling) settling.finished.then(cache,()=>setTimeout(cache,0));
+    else cache();
+  }
 }
 $('pageJump').onsubmit = event => {
   event.preventDefault();
@@ -538,6 +590,7 @@ function openDocument(file) {
   return file.format === 'reader.book.1' ? enterPack(file) : openBook(file.name,file.text);
 }
 async function loadPack(info,openingRows) {
+  clearTurnPages();
   stopTracking();
   const saved = bookmarkFor(info.book);
   if (info.book !== state.packId) stopGeneration();
@@ -563,10 +616,6 @@ async function enterPack(info,openingRows) {
     preparePage(job, true).catch(report);
 }
 async function renderPack(page=state.page,openingRows,opening=false) {
-  const draw=await preparePackPage(page,openingRows,opening);
-  return draw && draw();
-}
-async function preparePackPage(page,openingRows,opening=false) {
   const revision = ++pageVersion;
   const active = pack, lang = state.target;
   dismiss();
@@ -583,43 +632,48 @@ async function preparePackPage(page,openingRows,opening=false) {
     $('pageNumber').value = state.page + 1;
     throw error;
   }
-  return ()=>{
-    if (revision !== pageVersion) return false;
-    stopTracking();
-    state.page = page;
-    dismiss();
-    rows = result;
-    drawPackPassage();
-    $('title').textContent=active.title;
-    updatePageControls(active.pages);
-    updateProgress();
-    if(deferEntries) {
-      const task=readerAction('page',{book:active.book,page,lang}).then(updated=>{
-        if(revision!==pageVersion) return;
-        mergePageEntries(updated);
-        cacheReadingPage();
-      }).catch(error=>{if(revision===pageVersion) report(error);});
-      loadingEntries={revision,task};
-      task.finally(()=>{if(loadingEntries?.revision===revision) loadingEntries=null;});
-    } else if(!openingRows) cacheReadingPage();
-    return true;
-  };
+  if (revision !== pageVersion) return false;
+  stopTracking();
+  state.page = page;
+  dismiss();
+  rows = result;
+  drawPackPassage();
+  $('title').textContent=active.title;
+  updatePageControls(active.pages);
+  updateProgress();
+  if(deferEntries) {
+    const task=readerAction('page',{book:active.book,page,lang}).then(updated=>{
+      if(revision!==pageVersion) return;
+      mergePageEntries(updated);
+      cacheReadingPage();
+    }).catch(error=>{if(revision===pageVersion) report(error);});
+    loadingEntries={revision,task};
+    task.finally(()=>{if(loadingEntries?.revision===revision) loadingEntries=null;});
+  } else if(!openingRows) cacheReadingPage();
+  return true;
+}
+function readsTranslation(items) {
+  return !!items.length && state.translatedBook===pack.book && state.translatedLanguage===state.target &&
+    items.every(row=>row.entry?.translation);
 }
 function setReadingVersion() {
   const canReadTranslation=rows.length>0 && rows.every(row=>row.entry?.translation);
-  const translated=canReadTranslation && state.translatedBook===pack.book && state.translatedLanguage===state.target;
+  const translated=readsTranslation(rows);
   $('readingVersion').hidden=!canReadTranslation;
   $('readingVersion').setAttribute('aria-pressed',String(translated));
   $('readingVersion').textContent=translated ? 'Read original' : 'Read in '+(languages[state.target] || state.target);
   return translated;
 }
 function drawPackPassage() {
-  const article=$('passage'),translated=setReadingVersion();
+  fillPackPassage($('passage'),rows,setReadingVersion());
+  $('status').textContent='';
+}
+function fillPackPassage(article,items,translated,deferred) {
   article.replaceChildren(); article.lang=translated ? state.target : pack.lang;
   let paragraph = null, lastPara = null;
-  for (const row of rows) {
+  for (const row of items) {
     if (row.illustrations?.length) {
-      appendIllustrations(article,row.illustrations);
+      appendIllustrations(article,row.illustrations,deferred);
       paragraph=null;
     }
     if (!paragraph || row.para !== lastPara) {
@@ -640,15 +694,15 @@ function drawPackPassage() {
     });
     paragraph.append(row.text.slice(pos));
   }
-  $('status').textContent='';
 }
 $('readingVersion').onclick=()=>{
+  clearTurnPages();
   closeNavigation();
   dismiss();
   const translated=$('readingVersion').getAttribute('aria-pressed')==='true';
   state.translatedBook=translated ? '' : pack.book;
   state.translatedLanguage=translated ? '' : state.target;
-  drawPackPassage(); save();
+  drawPackPassage(); warmTurnPages(); save();
 };
 const navigationPanel=$('readerNavigation');
 let panelRevision=0;
@@ -689,7 +743,8 @@ async function legacyChapters(active,revision) {
 }
 async function openNavigation() {
   if(!navigationPanel.inert || $('reader').hidden) return;
-  cancelPageTurn();
+  requestedPage=null;
+  slider.reset();
   dismiss();
   const revision=++panelRevision,active=pack,list=$('chapterList');
   list.replaceChildren();
@@ -752,6 +807,7 @@ function pullWithWheel(event) {
 
 let drag=null;
 document.addEventListener('touchstart',event=>{
+  if(drag?.axis==='x' || slider.animations.length) slider.reset();
   drag=null;
   if($('reader').hidden || $('imageViewer').open || event.touches.length!==1 ||
      window.visualViewport?.scale>1 || !window.getSelection().isCollapsed) return;
@@ -764,29 +820,39 @@ document.addEventListener('touchstart',event=>{
     return;
   }
   if(event.target.closest('input,select,a,#popup,button:not(.passageWord):not(.illustration)')) return;
-  drag={x,y,axis:null,topY:window.scrollY<=1 ? y : null};
+  drag={x,y,axis:null,width:innerWidth,time:event.timeStamp,topY:window.scrollY<=1 ? y : null};
 },{passive:true});
 function moveReaderTouch(event) {
   if(!drag) return;
-  if(event.touches.length!==1) {drag=null; return;}
+  if(event.touches.length!==1) {slider.reset();drag=null;return;}
   const {clientX,clientY}=event.touches[0];
   const dx=Math.abs(clientX-drag.x),dy=Math.abs(clientY-drag.y);
-  if(!drag.axis && Math.max(dx,dy)>=12) drag.axis=dx>dy ? 'x' : 'y';
+  if(!drag.axis && Math.max(dx,dy)>=6) {
+    if(dx>1.35*dy) drag.axis='x';
+    else if(dy>dx) drag.axis='y';
+  }
   if(drag.panel) {
     if(event.cancelable && drag.axis==='y' && drag.y-clientY>1.5*dx) event.preventDefault();
     return;
   }
+  if(drag.axis==='x') {
+    if(event.cancelable) event.preventDefault();
+    const step=clientX<drag.x ? 1 : -1, page=(requestedPage ?? state.page)+step;
+    const target=page>=0 && page<(pack?.pages ?? pages.length) ? prepareTurnPage(page) : null;
+    slider.drag(clientX-drag.x,drag.width,step,target);
+    return;
+  }
   if(window.scrollY>1) drag.topY=null;
   else if(drag.topY===null || clientY<drag.topY) drag.topY=clientY;
-  if(event.cancelable && ((drag.axis==='x' && dx>1.5*dy) ||
-     (drag.axis==='y' && drag.topY!==null && clientY>drag.topY && dy>1.5*dx))) event.preventDefault();
+  if(event.cancelable && drag.axis==='y' && drag.topY!==null && clientY>drag.topY && dy>1.5*dx) event.preventDefault();
 }
-document.addEventListener('touchcancel',()=>{drag=null;},{passive:true});
+document.addEventListener('touchcancel',()=>{if(drag?.axis==='x') slider.snapBack();drag=null;},{passive:true});
 function endReaderTouch(event) {
   const start=drag;
   drag=null;
-  if(!start || event.touches.length || !window.getSelection().isCollapsed || $('reader').hidden ||
-     $('imageViewer').open || window.visualViewport?.scale>1) return;
+  if(!start) return;
+  if(event.touches.length || !window.getSelection().isCollapsed || $('reader').hidden ||
+     $('imageViewer').open || window.visualViewport?.scale>1) {slider.reset();return;}
   const {clientX,clientY}=event.changedTouches[0];
   const dx=clientX-start.x,dy=clientY-start.y;
   if(start.panel) {
@@ -797,9 +863,14 @@ function endReaderTouch(event) {
     return;
   }
   if(!navigationPanel.inert) return;
-  if(start.axis!=='y' && Math.abs(dx)>=60 && Math.abs(dx)>1.5*Math.abs(dy)) {
+  const distance=Math.abs(dx),speed=distance/Math.max(1,event.timeStamp-start.time);
+  if(start.axis!=='y' && distance>1.35*Math.abs(dy) &&
+     (distance>=Math.min(60,start.width*.16) || (distance>=24 && speed>=.45))) {
     if(event.cancelable) event.preventDefault();
     turnPage(dx<0 ? 1 : -1);
+  } else if(start.axis==='x') {
+    if(event.cancelable) event.preventDefault();
+    slider.snapBack();
   } else if(start.axis!=='x' && window.scrollY<=1 && start.topY!==null &&
             clientY-start.topY>=64 && dy>1.5*Math.abs(dx)) {
     if(event.cancelable) event.preventDefault();
@@ -849,6 +920,7 @@ async function preparePage(job, resume = false) {
         }
       }
       await readerAction('save',{...job,sid:row.id,entry});
+      turnPages.delete(job.page);
       if (task.cancelled) return;
       if (pack?.book===job.book && state.page===job.page && state.target===job.lang) {
         const shown = rows.find(r=>r.id===row.id);
@@ -913,7 +985,7 @@ function showView(id,updateHistory=true) {
     document.removeEventListener('touchend',endReaderTouch);
   }
   requestedPage=null;
-  cancelPageTurn();
+  clearTurnPages();
   closeNavigation();
   if (id !== 'reader') readingSession=null;
   if (id !== 'reader' && !$('reader').hidden) pageVersion++;
@@ -927,6 +999,7 @@ function showView(id,updateHistory=true) {
   if (id === 'reader') {
     const saved = bookmarkFor(state.hash);
     trackPage(saved.page === state.page ? saved.scrollY : 0);
+    warmTurnPages();
   } else window.scrollTo(0, 0);
   shelfMode().catch(report);
 }
@@ -1036,6 +1109,8 @@ async function applyBookUpdate(session,change) {
   cacheReadingPage();
 }
 function mergePageEntries(updated) {
+  turnPages.clear();
+  warmTurnPages();
   const entries=new Map(updated.map(row=>[row.id,row.entry]));
   for(const row of rows) row.entry=entries.get(row.id);
   if(setReadingVersion()) {
@@ -1084,6 +1159,7 @@ async function ensureReadingSource(session) {
         } else {
           Object.assign(pack,info);
           $('status').textContent='';
+          warmTurnPages();
           cacheReadingPage();
         }
       }
@@ -1136,6 +1212,7 @@ async function selectBook(item) {
           if(request===openRequest) await store.translations(info.book,lang);
         }).catch(()=>{}); // Navigation can retry a failed background read.
       }
+      if(opening && !needsSource && request===openRequest && pack===info) warmTurnPages();
       if(session && readingSession===session) checkReadingUpdates(session);
     },0));
   } catch(error){if(request===openRequest) shelfMessage(error.message);}
