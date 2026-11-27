@@ -317,7 +317,7 @@ async function openBook(name, text) {
   Object.assign(state, { name, hash, savedText:byteCount(JSON.stringify(text)) < 180000 ? text : '' });
   paginate();
   render();
-  $('status').textContent = state.savedText ? 'Tap a word for its meaning.' : 'Tap a word for its meaning. Reopen this file to resume next time.';
+  $('status').textContent = state.savedText ? '' : 'Reopen this file to resume next time.';
   showView('reader');
   save();
 }
@@ -403,6 +403,11 @@ document.addEventListener('click', e => {
   if (selection && !e.target.closest('#popup, .passageWord')) dismiss();
 });
 document.addEventListener('keydown', e => {
+  if (e.altKey && e.key==='ArrowDown' && !$('reader').hidden && !$('imageViewer').open) {
+    e.preventDefault();
+    openNavigation();
+    return;
+  }
   if (e.key !== 'Escape') return;
   if (!navigationPanel.hidden) closeNavigation();
   else if (selection) closeTranslation();
@@ -553,9 +558,10 @@ function drawPackPassage() {
     });
     paragraph.append(row.text.slice(pos));
   }
-  $('status').textContent=translated ? '' : 'Tap a word for its meaning.';
+  $('status').textContent='';
 }
 $('readingVersion').onclick=()=>{
+  closeNavigation();
   dismiss();
   const translated=$('readingVersion').getAttribute('aria-pressed')==='true';
   state.translatedBook=translated ? '' : pack.book;
@@ -563,15 +569,13 @@ $('readingVersion').onclick=()=>{
   drawPackPassage(); save();
 };
 const navigationPanel=$('readerNavigation');
-const navigationToggle=$('navigationToggle');
 let panelRevision=0;
 function closeNavigation() {
   if(navigationPanel.hidden) return;
   ++panelRevision;
   const hadFocus=navigationPanel.contains(document.activeElement);
   navigationPanel.hidden=true;
-  navigationToggle.setAttribute('aria-expanded','false');
-  if(hadFocus) navigationToggle.focus({preventScroll:true});
+  if(hadFocus) $('title').focus({preventScroll:true});
 }
 // Older APKs expose chapter labels one page at a time. Cancel the scan when the panel closes.
 async function legacyChapters(active,revision) {
@@ -595,7 +599,7 @@ async function openNavigation() {
   $('chapterSection').hidden=!active || active.chapters?.length===0;
   $('pageNumber').value=state.page+1;
   navigationPanel.hidden=false;
-  navigationToggle.setAttribute('aria-expanded','true');
+  navigationPanel.scrollTop=0;
   $('navigationClose').focus({preventScroll:true});
   if($('chapterSection').hidden) return;
   try {
@@ -622,11 +626,28 @@ async function openNavigation() {
     }
   } catch(error) {if(revision===panelRevision) list.textContent=error.message;}
 }
-navigationToggle.onclick=()=>navigationPanel.hidden ? openNavigation() : closeNavigation();
 $('navigationClose').onclick=closeNavigation;
 document.addEventListener('click',event=>{
-  if(!navigationPanel.hidden && !event.target.closest('#readerNavigation,#navigationToggle')) closeNavigation();
+  if(!navigationPanel.hidden && !navigationPanel.contains(event.target)) closeNavigation();
 });
+
+let wheelDistance=0,lastWheel=0;
+function pullWithWheel(event) {
+  const now=event.timeStamp;
+  if(now-lastWheel>250) wheelDistance=0;
+  lastWheel=now;
+  if(!navigationPanel.hidden || $('imageViewer').open || event.ctrlKey || window.scrollY>1 ||
+     event.deltaY>=0 || Math.abs(event.deltaX)>=-event.deltaY) {
+    wheelDistance=0;
+    return;
+  }
+  const unit=event.deltaMode===1 ? 16 : event.deltaMode===2 ? window.innerHeight : 1;
+  wheelDistance-=event.deltaY*unit;
+  if(wheelDistance>=64) {
+    wheelDistance=0;
+    openNavigation();
+  }
+}
 
 let drag=null;
 document.addEventListener('touchstart',event=>{
@@ -668,9 +689,8 @@ function endReaderTouch(event) {
 function updateProgress() {
   if (!pack) return;
   const ready = rows.filter(r=>r.entry).length;
-  $('progress').hidden = false;
-  $('progress').textContent = ready+' / '+rows.length+' sentences available offline in '+languages[state.target]+'.';
-  if (generation) $('progress').textContent += ' Preparing page '+(generation.job.page+1)+'…';
+  $('progress').hidden = !generation;
+  $('progress').textContent = generation ? 'Preparing page '+(generation.job.page+1)+'…' : '';
   $('readingVersion').hidden = !rows.length || ready!==rows.length;
   $('prepare').disabled = !generation && ready===rows.length;
   $('prepare').textContent = generation ? 'Pause preparation' : 'Prepare this page';
@@ -762,10 +782,13 @@ function showView(id,updateHistory=true) {
     else history.replaceState({languageView:id},'');
   }
   drag=null;
+  wheelDistance=0;
   if(id==='reader') {
+    document.addEventListener('wheel',pullWithWheel,{passive:true});
     document.addEventListener('touchmove',moveReaderTouch,{passive:false});
     document.addEventListener('touchend',endReaderTouch,{passive:false});
   } else {
+    document.removeEventListener('wheel',pullWithWheel);
     document.removeEventListener('touchmove',moveReaderTouch);
     document.removeEventListener('touchend',endReaderTouch);
   }
