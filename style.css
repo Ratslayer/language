@@ -92,7 +92,11 @@ html:has(#readerNavigation:not([inert])) { overflow:hidden; }
 
 .readingPassage .illustration { display:block; max-width:100%; margin:1em auto .25em; padding:0; border:0; border-radius:0; background:none; cursor:zoom-in; }
 .illustration canvas { display:block; max-width:100%; height:auto; }
-html:has(#imageViewer[open]) { overflow:hidden; }
+/* A wrap-content Android WebView can resolve vh/dvh to zero. Percentages on
+   fixed dialogs use the actual containing block, including in older APKs. */
+html:has(dialog[open]) { overflow:hidden; }
+dialog:modal { position:fixed; inset:0; height:fit-content; max-height:100%; margin:auto;
+  overflow:auto; overscroll-behavior:contain; }
 #imageViewer { position:fixed; inset:0; width:100%; height:100%; max-width:none; max-height:none; margin:0; padding:0; border:0; overflow:hidden; background:#101210; color:white; }
 #imageViewer::backdrop { background:#101210; }
 #imageViewer canvas { display:block; width:100%; height:100%; touch-action:none; user-select:none; }
@@ -104,13 +108,12 @@ html:has(#imageViewer[open]) { overflow:hidden; }
 #meaning, #wordDetails { display:block; }
 #wordDetails { white-space:normal; }
 #grammarLabel { color:#4b5d4d; }
-html:has(#grammarDialog[open]) { overflow:hidden; }
-#grammarDialog { width:min(26rem,calc(100% - 2rem)); max-height:85dvh; overflow:auto; overscroll-behavior:contain;
+#grammarDialog { width:min(26rem,calc(100% - 2rem)); overflow-wrap:anywhere;
   color:#232b23; background:#fffef9; border:1px solid #81917e; border-radius:.7rem; padding:1rem 1.2rem; }
 #grammarDialog::backdrop { background:#17231bc0; }
 #grammarDialog header { flex-wrap:nowrap; align-items:start; }
 #grammarTitle { margin:0; overflow-wrap:anywhere; }
-#closeRules { min-width:44px; min-height:44px; }
+#closeRules { flex:none; min-width:44px; min-height:44px; }
 #ruleLabel { margin:0; font-style:italic; color:#4b5d4d; }
 #ruleLabel:empty { display:none; }
 #ruleNote { margin:.6rem 0; }
