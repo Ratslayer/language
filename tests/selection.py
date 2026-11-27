@@ -15,7 +15,7 @@ window.AiPages = {postMessage(message) {
   const send = value => queueMicrotask(() => AiPages.onmessage({data:JSON.stringify({id:q.id,value})}));
   if (q.method === 'ai.run') { replies.push(send); return; }
   if (q.method === 'text.incoming') return send(window.fixture);
-  if (q.method === 'book.page') return send(window.testRows);
+  if (q.method === 'book.page') return send(window.testPages?.[q.page] ?? window.testRows);
   if (q.method === 'speech.speak') return send('spoken');
   if (q.method === 'storage.read') return send(localStorage.getItem('testState') ||
     JSON.stringify({source:window.testSource || 'es', target:window.testTarget || 'en', grammarFallback:window.testFallback}));
@@ -87,6 +87,47 @@ def verify_pack(browser):
     page.close()
 
 
+def verify_bookmarks(browser):
+    page = open_reader(browser, PACK + "window.fixture.pages=2;window.fixture.chapters=[{chapter:'First',id:0,page:0}];"
+        "window.testPages=[window.testRows,[{...window.testRows[0],id:4}]];")
+    target = page.locator("#passage .passageWord").nth(2)
+    target.tap()
+    mark = page.locator("#markSelection")
+    mark.tap()
+    expect(mark).to_have_attribute("aria-pressed", "true")
+    page.locator("#sentence").tap()
+    expect(mark).to_have_attribute("aria-pressed", "false")
+    mark.tap()
+    expect(mark).to_have_attribute("aria-pressed", "true")
+    page.reload()
+    expect(target).to_be_visible()
+    page.locator("#next").tap()
+    expect(page.locator("#count")).to_have_text("2 / 2")
+    for index in (0, 1):
+        page.keyboard.press("Alt+ArrowDown")
+        expect(page.locator("#chapterSection")).not_to_have_attribute("open", "")
+        expect(page.locator("#bookmarkSection")).not_to_have_attribute("open", "")
+        expect(page.locator("#chapterSection summary")).to_be_visible()
+        page.locator("#chapterSection summary").tap()
+        expect(page.locator("#chapterList button")).to_have_text("First · p. 1")
+        page.locator("#bookmarkSection summary").tap()
+        expect(page.locator(".bookmarkRow")).to_have_count(2)
+        expect(page.locator(".bookmarkRow strong")).to_have_text("sí")
+        page.locator(".bookmarkRow").nth(index).locator("button").first.tap()
+        if index:
+            expect(page.locator(".activeSentence")).to_have_text("Dijo «sí, sí».")
+        else:
+            expect(target).to_have_class("passageWord active")
+        expect(mark).to_have_attribute("aria-pressed", "true")
+    mark.tap()
+    expect(mark).to_have_attribute("aria-pressed", "false")
+    page.keyboard.press("Alt+ArrowDown")
+    page.locator("#bookmarkSection summary").tap()
+    page.get_by_role("button", name="Remove bookmark for sí").tap()
+    expect(page.locator("#bookmarkList")).to_have_text("No bookmarks yet.")
+    page.close()
+
+
 def verify_pending(browser):
     page = open_reader(browser, "window.fixture={name:'test.txt',text:'¿Qué dijo? Otra frase.'};")
     word = page.get_by_role("button", name="dijo", exact=True)
@@ -142,7 +183,7 @@ def verify_english_rules(browser):
     expect(page.locator("#word")).to_have_text("foot")
     expect(label).to_contain_text("noun, plural")
     expect(page.locator("#grammarSource")).to_have_text("")
-    assert page.locator(".translationHeading").locator("button").all_text_contents() == ["🔊", "Sentence", "Rules", "×"]
+    assert page.locator(".translationHeading").locator("button").all_text_contents() == ["🔊", "", "Sentence", "Rules", "×"]
     assert page.locator(".translationHeading strong").count() == 0
     assert page.locator("#word").evaluate("e=>getComputedStyle(e).fontWeight") in ("700", "bold")
     assert label.evaluate("e=>getComputedStyle(e).fontStyle") == "italic"
@@ -452,6 +493,7 @@ if __name__ == "__main__":
         browser = playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH"))
         try:
             verify_pack(browser)
+            verify_bookmarks(browser)
             verify_pending(browser)
             verify_english_rules(browser)
             verify_live_english(browser)
