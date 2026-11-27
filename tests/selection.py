@@ -250,16 +250,16 @@ def verify_live_english(browser):
         saw.nth(i).tap()
         page.wait_for_function("replies.length === 1")
         assert "{translation,lemma}" in page.evaluate("calls.filter(q=>q.method==='ai.run').at(-1).prompt")
-        expect(page.locator("#grammarSource")).to_have_text("Local rules")
+        expect(page.locator("#grammarSource")).to_have_text("Локальные правила")
         page.locator("#rules").tap()
         page.evaluate("raw=>replies.shift()(raw)", json.dumps(answer))
-        expect(page.locator("#ruleLabel")).to_contain_text(answer["grammar"]["pos"])
+        expect(page.locator("#ruleLabel")).to_contain_text(["глагол", "существительное"][i])
         expect(page.locator("#grammarTable tr[aria-current=true] td")).to_have_text("saw")
         page.locator("#closeRules").tap()
         expect(page.locator("#meaning")).to_have_text(answer["translation"])
         expect(page.locator("#word")).to_have_text(answer["grammar"]["lemma"])
     saw.nth(0).tap()
-    expect(page.locator("#grammarLabel")).to_contain_text("verb, past simple")
+    expect(page.locator("#grammarLabel")).to_have_text("глагол, прошедшее простое")
     assert page.evaluate("replies.length") == 0
     page.close()
 
@@ -276,7 +276,7 @@ def verify_translation_only(browser):
           grammar:{lemma:'unexpected',pos:'noun',form:'singular',note:'Unrequested AI grammar.'}}))""", [lemma, gloss])
         expect(page.locator("#meaning")).to_have_text(gloss)
         expect(page.locator("#word")).to_have_text(lemma)
-        expect(page.locator("#grammarSource")).to_have_text("Local rules")
+        expect(page.locator("#grammarSource")).to_have_text("Локальные правила")
     assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 2
     page.close()
 
@@ -285,16 +285,63 @@ def verify_grammar_without_translation(browser):
     page = open_reader(browser, """window.testSource='en';window.testTarget='ru';
       window.fixture={name:'local.txt',text:'The quiet children walked slowly through the garden.'};""")
     page.get_by_role("button", name="children", exact=True).tap()
-    expect(page.locator("#grammarLabel")).to_have_text("noun, plural")
+    expect(page.locator("#grammarLabel")).to_have_text("существительное, множественное число")
     expect(page.locator("#meaning")).to_have_text("Translating…")
     page.locator("#rules").tap()
+    expect(page.locator("#rules")).to_have_text("Правила")
+    expect(page.locator("#ruleNote")).to_have_text("«children» — форма множественного числа существительного «child».")
+    expect(page.locator("#grammarTable th")).to_have_text(["единственное число", "множественное число"])
     expect(page.locator("#grammarTable td")).to_have_text(["child", "children"])
+    expect(page.locator("#originalGrammar")).to_be_hidden()
     page.evaluate("""()=>{const q=calls.find(q=>q.method==='ai.run');
       AiPages.onmessage({data:JSON.stringify({id:q.id,error:'HTTP 403'})});}""")
     expect(page.locator("#meaning")).to_have_text("HTTP 403")
-    expect(page.locator("#grammarSource")).to_have_text("Local rules")
+    expect(page.locator("#grammarSource")).to_have_text("Локальные правила")
     expect(page.locator("#retryRules")).to_be_hidden()
     assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 1
+    page.close()
+
+
+def verify_legacy_russian_note(browser):
+    page = open_reader(browser, """
+      window.testTarget='ru';
+      window.fixture={format:'reader.book.1',book:'legacy',lang:'en',title:'Grammar',pages:1};
+      window.testRows=[{id:1,para:0,text:'Zandor.',words:[[0,6]],entry:{translation:'Зандор.',
+        groups:[[[0],'zandor','зандор']],grammar:[{lemma:'zandor',pos:'noun',form:'singular',note:'A fictional name.'}]}}];""")
+    word = page.get_by_role("button", name="Zandor", exact=True)
+    dialog = page.locator("#grammarDialog")
+    note = dialog.locator("#ruleNote")
+    word.tap()
+    expect(page.locator("#grammarSource")).to_have_text("Из книги")
+    page.locator("#rules").tap()
+    expect(note).to_contain_text("существительное в единственном числе")
+    dialog.locator("summary").tap()
+    expect(dialog.locator("#originalGrammar p")).to_have_text("A fictional name.")
+    assert page.evaluate("replies.length") == 0
+    dialog.locator("#closeRules").tap()
+    page.locator("#openSettings").tap()
+    page.get_by_text("Experiments", exact=True).tap()
+    page.get_by_role("checkbox", name="Обращаться к ИИ", exact=False).check()
+    page.locator("#closeSettings").tap()
+    word.tap()
+    page.locator("#rules").tap()
+    page.wait_for_function("replies.length === 1")
+    assert "A fictional name." in page.evaluate("calls.filter(q=>q.method==='ai.run').at(-1).prompt")
+    page.evaluate("replies.shift()('Вымышленное имя.')")
+    expect(note).to_have_text("Вымышленное имя.")
+    page.wait_for_function("localStorage.getItem('testState')?.includes('Вымышленное имя.')")
+    page.reload()
+    word.tap()
+    page.locator("#rules").tap()
+    expect(note).to_have_text("Вымышленное имя.")
+    assert page.evaluate("replies.length") == 0
+    dialog.locator("#closeRules").tap()
+    page.evaluate("const t=document.getElementById('target'); t.value='fr'; t.dispatchEvent(new Event('change'))")
+    word.tap()
+    page.locator("#rules").tap()
+    expect(note).to_have_text("A fictional name.")
+    expect(dialog.locator("#ruleLabel")).to_have_text("noun, singular")
+    expect(dialog.locator("#originalGrammar")).to_be_hidden()
     page.close()
 
 
@@ -317,6 +364,7 @@ def verify_shelf_settings(browser):
 def verify_page_preparation(browser):
     for enabled in (False, True):
         fixture = """
+        window.testTarget='ru';
         window.fixture={format:'reader.book.1',book:'prep',lang:'en',title:'Grammar',pages:1};
         window.testRows=[{id:1,para:0,text:'Feet.',words:[[0,4]]}];
         """
@@ -327,11 +375,15 @@ def verify_page_preparation(browser):
         assert ("grammar as a separate top-level array" in prompt) == enabled
         page.evaluate("""replies.shift()(JSON.stringify({translation:'Ступни.',groups:[[[0],'foot','ступни']]}))""")
         if enabled:
+            assert "noteRu" in prompt
             page.wait_for_function("replies.length === 1")
-            page.evaluate("""replies.shift()(JSON.stringify([{lemma:'foot',pos:'noun',form:'plural',note:'Plural of foot.'}]))""")
+            assert "noteRu" in page.evaluate("calls.filter(q=>q.method==='ai.run').at(-1).prompt")
+            page.evaluate("""replies.shift()(JSON.stringify([{lemma:'foot',pos:'noun',form:'plural',note:'Plural of foot.',noteRu:'Форма множественного числа.'}]))""")
         page.wait_for_function("calls.some(q=>q.method==='book.save')")
         entry = page.evaluate("calls.find(q=>q.method==='book.save').entry")
         assert ("grammar" in entry) == enabled
+        if enabled:
+            assert entry["grammar"][0]["noteRu"] == "Форма множественного числа."
         assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == (2 if enabled else 1)
         page.close()
 
@@ -355,20 +407,23 @@ def verify_dialog_height(browser):
         assert size["bottom"] <= page.viewport_size["height"] + 1, size
         return size["height"]
 
-    expect(dialog.locator("#ruleNote")).to_have_text("Checking grammar…")
+    expect(dialog.locator("#ruleNote")).to_have_text("Проверяем грамматику…")
     pending_height = fits()
     error = "OpenAI could not complete the request, HTTP 403"
     page.evaluate("""error => {const q=calls.filter(q=>q.method==='ai.run').at(-1);
       AiPages.onmessage({data:JSON.stringify({id:q.id,error})});}""", error)
-    expect(page.locator("#grammarLabel")).to_have_text("Grammar unavailable")
+    expect(page.locator("#grammarLabel")).to_have_text("Разбор недоступен")
     expect(dialog.locator("#ruleNote")).to_have_text(error)
     expect(dialog.locator("#retryRules")).to_be_in_viewport()
     assert fits() > pending_height
     dialog.locator("#retryRules").tap()
-    expect(dialog.locator("#ruleNote")).to_have_text("Checking grammar…")
+    expect(dialog.locator("#ruleNote")).to_have_text("Проверяем грамматику…")
     page.wait_for_function("replies.length===2")
     page.evaluate("""replies.pop()(JSON.stringify({translation:'example',grammar:{lemma:'flarn',pos:'verb',
-      form:'past participle',tense:'past perfect',subject:'3s',note:'The meal happened before another past event.'}}))""")
+      form:'past participle',tense:'past perfect',subject:'3s',note:'The meal happened before another past event.',noteRu:'Действие произошло до другого момента в прошлом.'}}))""")
+    expect(dialog.locator("#ruleNote")).to_have_text("Действие произошло до другого момента в прошлом.")
+    expect(dialog.locator("select option:checked")).to_have_text("прошедшее совершенное")
+    expect(dialog.locator("tr[aria-current=true] td")).to_have_text("had flarned")
     expect(dialog.locator("tbody tr")).to_have_count(6)
     card_height = fits()
     # Just under a full screen must still fit without an internal scroll area.
@@ -384,7 +439,7 @@ def verify_dialog_height(browser):
     fits()
     page.evaluate("dispatchEvent(new Event('tool-back'))")
     expect(dialog).to_be_hidden()
-    expect(page.locator("#grammarLabel")).to_contain_text("past perfect")
+    expect(page.locator("#grammarLabel")).to_contain_text("прошедшее совершенное")
     page.close()
 
 
@@ -398,6 +453,7 @@ if __name__ == "__main__":
             verify_live_english(browser)
             verify_translation_only(browser)
             verify_grammar_without_translation(browser)
+            verify_legacy_russian_note(browser)
             verify_shelf_settings(browser)
             verify_page_preparation(browser)
             verify_dialog_height(browser)

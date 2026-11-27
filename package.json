@@ -10,6 +10,7 @@
     "sql.js": "1.14.1"
   },
   "devDependencies": {
+    "@gfx/zopfli": "1.0.15",
     "esbuild": "0.25.12",
     "jsrealb": "5.6.0",
     "wink-lexicon": "2.2.0",

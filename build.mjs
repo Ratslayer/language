@@ -1,13 +1,13 @@
 import { readFile, writeFile, mkdir, copyFile } from 'node:fs/promises';
-import { gzipSync } from 'node:zlib';
+import zopfli from '@gfx/zopfli';
 import { transform } from 'esbuild';
 
 import { englishMorphology } from './scripts/english-morphology.mjs';
 import { browserTagger } from './scripts/english-tagger.mjs';
 
 const vendor = 'node_modules/sql.js/';
-const compressed = gzipSync(await readFile(vendor+'dist/sql-wasm-browser.wasm'), {level:9});
-// Z85 keeps the embedded SQLite binary within the older signed catalogue's size limit.
+// Denser build-time gzip and Z85 keep the localized reader within the legacy signed catalogue's size limit.
+const compressed = Buffer.from(await zopfli.gzipAsync(await readFile(vendor+'dist/sql-wasm-browser.wasm'), {}));
 const alphabet='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#';
 function encode85(bytes) {
   const padded=Buffer.alloc(Math.ceil(bytes.length/4)*4);
@@ -29,11 +29,11 @@ const bundle = [
   'const sqliteAlphabet='+JSON.stringify(alphabet)+',sqliteSize='+compressed.length+',sqliteGzip='+JSON.stringify(encode85(compressed))+';',
   await readFile('page-files.js','utf8'), await readFile('reader-store.js','utf8'),
   'const englishMorphologyGzip = '+JSON.stringify(englishMorphology())+';',
-  await browserTagger(),await readFile('english-grammar.js','utf8'),await readFile('english-analysis.js','utf8'),await readFile('grammar-dialog.js','utf8'),
+  await browserTagger(),await readFile('english-grammar.js','utf8'),await readFile('english-analysis.js','utf8'),await readFile('grammar-russian.js','utf8'),await readFile('grammar-dialog.js','utf8'),
   await readFile('pronunciation.js','utf8'),
   await readFile('opening-pages.js','utf8'), await readFile('book-catalogue.js','utf8'), await readFile('image-viewer.js','utf8'), await readFile('page-slider.js','utf8'), await readFile('app.js','utf8'),
 ];
 await mkdir('dist',{recursive:true});
-const {code}=await transform('(()=>{\n'+bundle.join('\n;\n')+'\n})()',{minify:true,target:'es2022',legalComments:'none'});
+const {code}=await transform('(()=>{\n'+bundle.join('\n;\n')+'\n})()',{minify:true,charset:'utf8',target:'es2022',legalComments:'none'});
 await writeFile('dist/app.js','/* '+notices.join('\n')+' */\n'+code);
 for (const name of ['index.html','style.css']) await copyFile(name,'dist/'+name);
