@@ -60,18 +60,12 @@ nav { margin-top: 1.5rem; }
 .shelfControls button { font-size:.88rem; }
 html:has(#reader:not([hidden])) { overscroll-behavior:none; }
 #reader { touch-action:pan-y pinch-zoom; }
-html:has(#readerNavigation:not([hidden])) { overflow:hidden; }
+body:has(> #readerNavigation:not([hidden])) { background:#fffdf7; }
 #readerNavigation {
-  position:fixed; z-index:2; inset:0 0 auto;
-  min-height:66vh; min-height:66dvh; max-height:100vh; max-height:100dvh;
+  min-height:100vh;
   padding:0 1rem max(.75rem,env(safe-area-inset-bottom));
   padding-inline:max(1rem,env(safe-area-inset-left)) max(1rem,env(safe-area-inset-right));
-  background:#fffdf7; border-bottom:1px solid #a9b1a4; border-radius:0 0 .65rem .65rem;
-  box-shadow:0 .25rem .9rem #22342829; overscroll-behavior:contain; overflow-y:auto;
-}
-@media (prefers-reduced-motion:no-preference) {
-  #readerNavigation { animation:dropNavigation .16s ease-out; }
-  @keyframes dropNavigation { from { top:-1rem; } }
+  background:#fffdf7;
 }
 .navigationControls { position:sticky; top:0; z-index:1; background:#fffdf7; padding:max(.75rem,env(safe-area-inset-top)) 0 .5rem; }
 .navigationHeader { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:.5rem; }
