@@ -268,6 +268,7 @@ function fillTextPassage(article,page) {
       span.append(wordButton(part.segment, { partId, sentence, index:part.index }));
     }
   }
+  highlightBookmarks(article,page);
 }
 const wordContexts=new WeakMap();
 function wordButton(text, context) {
@@ -322,6 +323,25 @@ function sameMark(a,b) {
   return a.page===b.page && a.rowId===b.rowId && a.partId===b.partId &&
     a.sentence===b.sentence && a.index===b.index && a.word===b.word;
 }
+function highlightBookmarks(article,page) {
+  for(const node of article.querySelectorAll('[data-bookmarked]')) node.removeAttribute('data-bookmarked');
+  const marks=(savedSelections[bookmarkBookKey()] || []).filter(mark=>mark.page===page);
+  if(!marks.length) return;
+  for(const button of article.querySelectorAll('.passageWord')) {
+    const {row,partId,sentence,index}=wordContexts.get(button);
+    for(const mark of marks) {
+      if(mark.rowId!==(row?.id ?? null) || mark.partId!==partId || mark.sentence!==sentence) continue;
+      if(mark.index===null) button.parentElement.toggleAttribute('data-bookmarked',true);
+      else if(mark.index===index && mark.word===button.textContent) button.toggleAttribute('data-bookmarked',true);
+    }
+  }
+  // A translated row has an exact sentence counterpart only when the entire source row was bookmarked.
+  for(const span of article.querySelectorAll('[data-translated-row]')) {
+    if(marks.some(mark=>mark.index===null && mark.rowId===Number(span.dataset.translatedRow) &&
+      mark.sentence.trim()===span.dataset.sourceSentence))
+      span.toggleAttribute('data-bookmarked',true);
+  }
+}
 function updateBookmarkButton() {
   const mark=selectionMark(),button=$('markSelection');
   const saved=savedSelections[bookmarkBookKey()]?.some(item=>sameMark(item,mark)) || false;
@@ -341,6 +361,11 @@ function changeBookmark(mark,remove) {
       try { await persist(); } catch(error) {state.savedSelections=savedSelections;throw error;}
     }
     savedSelections=next;
+    if(bookId===bookmarkBookKey()) {
+      if(mark.page===state.page) highlightBookmarks($('passage'),mark.page);
+      const cached=turnPages.get(mark.page)?.article;
+      if(cached && cached!==$('passage')) highlightBookmarks(cached,mark.page);
+    }
     if(selection) updateBookmarkButton();
     if(!navigationPanel.inert && $('bookmarkSection').open) renderBookmarks();
   });
@@ -694,7 +719,7 @@ function prepareTurnPage(page,idle=false) {
     const article=document.createElement('article');
     article.className='readingPassage'; article.dir='auto';
     article.setAttribute('aria-label','Reading text');
-    if(active) fillPackPassage(article,item.rows,readsTranslation(item.rows),deferred);
+    if(active) fillPackPassage(article,item.rows,readsTranslation(item.rows),page,deferred);
     else fillTextPassage(article,page);
     item.article=article;
   });
@@ -981,10 +1006,10 @@ function setReadingVersion() {
   return translated;
 }
 function drawPackPassage() {
-  fillPackPassage($('passage'),rows,setReadingVersion());
+  fillPackPassage($('passage'),rows,setReadingVersion(),state.page);
   $('status').textContent='';
 }
-function fillPackPassage(article,items,translated,deferred) {
+function fillPackPassage(article,items,translated,page,deferred) {
   article.replaceChildren(); article.lang=translated ? state.target : pack.lang;
   const sentences = new Intl.Segmenter(pack.lang, {granularity:'sentence'});
   let paragraph = null, lastPara = null;
@@ -1000,6 +1025,8 @@ function fillPackPassage(article,items,translated,deferred) {
     anchor.id='sentence-'+row.id;
     paragraph.append(anchor);
     if(translated) {
+      anchor.dataset.translatedRow=row.id;
+      anchor.dataset.sourceSentence=row.text.trim();
       anchor.textContent=row.entry.translation;
       continue;
     }
@@ -1019,6 +1046,7 @@ function fillPackPassage(article,items,translated,deferred) {
       pos = Math.max(pos,end);
     }
   }
+  highlightBookmarks(article,page);
 }
 $('readingVersion').onclick=()=>{
   clearTurnPages();

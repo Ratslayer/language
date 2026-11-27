@@ -22,6 +22,9 @@ article { font-size: 1.3rem; line-height: 1.8; white-space: pre-wrap; overflow-w
 .passageWord { all: unset; font: inherit; cursor: pointer; }
 .passageWord:is(:focus-visible,.active) { background: #d3e4ba; outline: 1px solid #68835e; border-radius: .15rem; }
 .activeSentence { background: #d3e4ba; border-radius: .15rem; }
+.readingPassage [data-bookmarked],
+.readingPassage [data-bookmarked] > .passageWord:is(:focus-visible,.active) { background-color:#ffc9df; border-radius:.15rem; }
+.readingPassage .activeSentence[data-bookmarked] { outline:1px solid #90526d; }
 nav { margin-top: 1.5rem; }
 #pageJump { display: flex; gap: .45rem; align-items: center; flex-wrap: wrap; }
 #pageNumber { width: 5em; padding: .4rem .5rem; background: #fffdf7; border: 1px solid #a9b1a4; border-radius: .4rem; }
