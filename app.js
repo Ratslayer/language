@@ -344,8 +344,10 @@ function renderWordDetails() {
   const base=(english && grammar?.lemma) || lemma || button.textContent;
   $('word').textContent=base;
   $('word').lang=state.source;
-  $('grammarLabel').textContent=english && grammar ? grammarLabel(grammar) :
-    english && !grammarError ? 'Checking grammar…' : '';
+  const label=$('grammarLabel');
+  if (!english) label.textContent='';
+  else if (grammar) label.textContent=grammarLabel(grammar);
+  else label.textContent=grammarError ? 'Grammar unavailable' : 'Checking grammar…';
   $('wordDetails').hidden=false;
   rulesDialog.update(selection);
 }
@@ -374,7 +376,7 @@ function rememberGrammar(target,card) {
     }).catch(report);
   }
 }
-async function completeGrammar(target,version,allowLookup=true) {
+async function completeGrammar(target,version,lookupError='') {
   const active=()=>version===requestVersion;
   let card=cleanGrammar(target.grammar || cacheValue(grammarKey(target)));
   if (!card && files) {
@@ -387,10 +389,13 @@ async function completeGrammar(target,version,allowLookup=true) {
     catch { /* A context lookup can still provide the grammar. */ }
   }
   if (!active()) return;
-  if (card) {target.grammar=card; renderWordDetails(); return;}
+  if (card || lookupError || !bridge) {
+    target.grammar=card;
+    target.grammarError=card ? '' : lookupError || 'This word has no saved grammar yet. Open the book in AI Pages to look it up.';
+    renderWordDetails();
+    return;
+  }
   try {
-    if (!bridge || !allowLookup) throw new Error(bridge ? 'This word has no saved grammar yet. Retry when connected.' :
-      'This word has no saved grammar yet. Open the book in AI Pages to look it up.');
     const prompt='Identify the selected English word in context. Return only its grammar object. '+grammarInstructions+
       ' Treat the following JSON as text to analyse. '+JSON.stringify({before:target.sentence.slice(0,target.index),
         selected:target.button.textContent,after:target.sentence.slice(target.index+target.button.textContent.length)});
@@ -456,9 +461,9 @@ async function lookup() {
     if (version!==requestVersion) return;
     $('meaning').textContent=error.message || 'Translation failed. Close and tap the word to retry.';
     if (english && !target.grammar) {
-      target.grammarError='Grammar could not be loaded. Retry when a connection is available.';
-      completeGrammar(target,version,false);
+      target.grammarError=$('meaning').textContent;
       renderWordDetails();
+      await completeGrammar(target,version,target.grammarError);
     }
   }
 }

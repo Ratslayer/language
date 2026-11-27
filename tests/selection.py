@@ -219,6 +219,58 @@ def verify_live_english(browser):
     page.close()
 
 
+def verify_dialog_height(browser):
+    page = open_reader(browser, """window.testSource='en';window.testTarget='ru';
+      window.fixture={name:'test.txt',text:'She had already eaten.'};""")
+    dialog = page.locator("#grammarDialog")
+    page.get_by_role("button", name="eaten", exact=True).tap()
+    page.locator("#rules").tap()
+
+    def dimensions():
+        return dialog.evaluate("""d => {
+          const box=d.getBoundingClientRect();
+          return {height:box.height, top:box.top, bottom:box.bottom, overflow:d.scrollHeight-d.clientHeight};
+        }""")
+
+    def fits():
+        size = dimensions()
+        assert size["overflow"] <= 1 and size["top"] >= -1, size
+        assert size["bottom"] <= page.viewport_size["height"] + 1, size
+        return size["height"]
+
+    expect(dialog.locator("#ruleNote")).to_have_text("Checking grammar…")
+    pending_height = fits()
+    error = "OpenAI could not complete the request, HTTP 403"
+    page.evaluate("""error => {const q=calls.filter(q=>q.method==='ai.run').at(-1);
+      AiPages.onmessage({data:JSON.stringify({id:q.id,error})});}""", error)
+    expect(page.locator("#grammarLabel")).to_have_text("Grammar unavailable")
+    expect(dialog.locator("#ruleNote")).to_have_text(error)
+    expect(dialog.locator("#retryRules")).to_be_in_viewport()
+    assert fits() > pending_height
+    dialog.locator("#retryRules").tap()
+    expect(dialog.locator("#ruleNote")).to_have_text("Checking grammar…")
+    page.wait_for_function("replies.length===2")
+    page.evaluate("""replies.pop()(JSON.stringify({translation:'поела',grammar:{lemma:'eat',pos:'verb',
+      form:'past participle',tense:'past perfect',subject:'3s',note:'The meal happened before another past event.'}}))""")
+    expect(dialog.locator("tbody tr")).to_have_count(6)
+    card_height = fits()
+    # Just under a full screen must still fit without an internal scroll area.
+    page.set_viewport_size({"width": 320, "height": int(card_height)+3})
+    fits()
+    for height in [220, 180]:
+        page.set_viewport_size({"width": 540, "height": height})
+        size=dimensions()
+        assert abs(size["height"]-height) <= 1 and size["overflow"] > 1, size
+        dialog.locator("tr").last.scroll_into_view_if_needed()
+        expect(dialog.locator("tr").last).to_be_in_viewport()
+    page.set_viewport_size({"width": 320, "height": 700})
+    fits()
+    page.evaluate("dispatchEvent(new Event('tool-back'))")
+    expect(dialog).to_be_hidden()
+    expect(page.locator("#grammarLabel")).to_contain_text("past perfect")
+    page.close()
+
+
 if __name__ == "__main__":
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH"))
@@ -227,5 +279,14 @@ if __name__ == "__main__":
             verify_pending(browser)
             verify_english_rules(browser)
             verify_live_english(browser)
+            verify_dialog_height(browser)
         finally:
             browser.close()
+        # Android WebView enables this Blink setting for WRAP_CONTENT, even when
+        # its parent actually measures the WebView at the full screen height.
+        legacy = playwright.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH"),
+                                            args=["--blink-settings=forceZeroLayoutHeight=true"])
+        try:
+            verify_dialog_height(legacy)
+        finally:
+            legacy.close()
