@@ -3,7 +3,9 @@ The reader opens on **Books** with the translation language in the top-right cor
 
 AI Pages 0.2.3 or later provides the Android file picker, ChatGPT sign-in, storage, and the fast-text profile (gpt-6-luna with reasoning effort none). PDF text is extracted on the device and reflows into reader pages. Choose the reading language before importing a scan. Pages without embedded text use offline OCR in that language. Open a PDF from the reader or choose AI Pages under **Open with** in Android Files. Unlock password-protected files before importing them. On AI Pages 0.2.5 or later, tapping a word sends the lookup directly. Recent translations and the page bookmark are saved locally. Saved short texts appear on the bookshelf. For longer texts, reselect the same file to resume.
 
-Run `npm ci && npm run build` and serve `dist/` over localhost for a browser preview. Plain-text import, pagination, and bookmarks work in the browser. PDF import and live translation require AI Pages.
+Tap 🔊 beside a selected word to hear its exact spelling pronounced in the book's language. On AI Pages 0.3.3 or later, playback uses the phone's offline voice and works while a translation is loading. If the voice data is missing, tap **Install voice** and choose the language in Android's installer.
+
+Run `npm ci && npm run build` and serve `dist/` over localhost for a browser preview. Plain-text import, pagination, and bookmarks work in the browser. Browsers with speech synthesis also support pronunciation. PDF import and live translation require AI Pages.
 
 AI Pages 0.2.6 adds local SQLite books. Use **Open book or language file** to pick a prepared book.sqlite in Android Files or Drive. Use the same button again to import the matching en.sqlite or another target language. The Android TXT/PDF picker also builds local books, including scanned pages through the existing OCR pipeline. Selecting a saved book restores its reading position.
 
