@@ -16,7 +16,7 @@ To publish an update, upload the finished SQLite files to Drive first, then repl
 
 AI Pages 0.3.0 gives Language a private directory. Language opens the source and translation databases with bundled SQLite, imports documents, validates downloads, merges translations, and manages the catalogue offline. The upgrade reuses existing SQLite files, catalogue checkpoints, and bookmarks.
 
-Tap the chapter beside the book title to see the table of contents and jump to its first sentence. The reader derives chapters from labels in the book, including repeated labels and chapters that start partway down a page. Unlabelled documents keep the page controls. On older AI Pages versions, the reader can collect available chapter labels through the existing page API when the picker first opens.
+Pull down past the top of a reading page or tap **Navigate** beside the title. In the panel, enter a page number or tap a chapter to jump to its first sentence. Swipe right to advance one page and left to go back one page. Use Back to return to Books. The reader derives chapters from labels in the book, including repeated labels and chapters that start partway down a page. Unlabelled documents keep the page controls. On older AI Pages versions, the reader collects chapter labels when the panel first opens.
 
 Prepared books can include inline illustrations. Add an optional SQLite table
 `illustrations(sid INTEGER, position INTEGER, width INTEGER, height INTEGER, mime TEXT, alt TEXT, data BLOB, PRIMARY KEY(sid,position))`.

@@ -21,7 +21,6 @@
     </div>
   </section>
   <section id="fileTools" aria-label="Local files" hidden>
-    <button id="filesBack">‹ Books</button>
     <header><h1>Local files</h1><button id="open" disabled>Open .txt file</button></header>
     <input id="file" type="file" accept=".txt,text/plain" hidden>
     <section class="languages" aria-label="Languages">
@@ -38,18 +37,25 @@
     <p id="fileStatus" role="status"></p>
   </section>
   <section id="reader" aria-labelledby="title" hidden>
-    <button id="backToBooks">‹ Books</button>
-    <div class="bookHeading"><h1 id="title"></h1><button id="chapters" aria-label="Choose chapter" aria-haspopup="dialog" hidden></button></div>
-    <dialog id="chapterDialog" aria-labelledby="chapterHeading">
-      <header><h2 id="chapterHeading">Chapters</h2><button id="chapterClose" aria-label="Close chapters">×</button></header>
-      <div id="chapterList"></div>
-    </dialog>
-    <form id="pageJump" hidden>
-      <label for="pageNumber">Page</label>
-      <input id="pageNumber" type="number" inputmode="numeric" enterkeyhint="go" min="1" step="1" required autocomplete="off">
-      <span id="pageTotal"></span>
-      <button type="submit">Go</button>
-    </form>
+    <div class="bookHeading">
+      <h1 id="title"></h1>
+      <button id="navigationToggle" type="button" aria-label="Page and chapter navigation" aria-expanded="false" aria-controls="readerNavigation">Navigate ▾</button>
+    </div>
+    <section id="readerNavigation" aria-label="Page and chapter navigation" hidden>
+      <div class="navigationHeader">
+        <form id="pageJump">
+          <label for="pageNumber">Page</label>
+          <input id="pageNumber" type="number" inputmode="numeric" enterkeyhint="go" min="1" step="1" required autocomplete="off">
+          <span id="pageTotal"></span>
+          <button type="submit">Go</button>
+        </form>
+        <button id="navigationClose" type="button" aria-label="Close navigation">×</button>
+      </div>
+      <section id="chapterSection" aria-labelledby="chapterHeading" hidden>
+        <h2 id="chapterHeading">Chapters</h2>
+        <div id="chapterList"></div>
+      </section>
+    </section>
     <p id="progress" role="status" hidden></p>
     <button id="readingVersion" type="button" hidden></button>
     <p id="status" role="status"></p>
