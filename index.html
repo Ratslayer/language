@@ -37,10 +37,10 @@
     <p id="fileStatus" role="status"></p>
   </section>
   <section id="reader" aria-labelledby="title" hidden>
-    <h1 id="title" tabindex="-1"></h1>
+    <h1 id="title" class="readingTitle" tabindex="-1"></h1>
     <p id="progress" role="status" hidden></p>
     <p id="status" role="status"></p>
-    <article id="passage" dir="auto" aria-label="Reading text"></article>
+    <article id="passage" class="readingPassage" dir="auto" aria-label="Reading text"></article>
     <span id="popup" role="region" lang="en" dir="ltr" aria-label="Translation" hidden>
       <span class="translationHeading">
         <strong id="word" dir="auto"></strong>
@@ -52,6 +52,7 @@
     <nav hidden><button id="prev">Previous</button><span id="count"></span><button id="next">Next</button></nav>
   </section>
 </main>
+<div id="pagePreview" inert aria-hidden="true" hidden><div class="readingColumn"></div></div>
 <section id="readerNavigation" aria-label="Reading controls" aria-keyshortcuts="Alt+ArrowDown" inert>
   <div class="navigationControls">
     <div class="navigationHeader">
