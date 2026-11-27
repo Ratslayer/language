@@ -3,6 +3,7 @@
 import jsRealB from 'jsrealb';
 import defaults from '../english-grammar.js';
 import {gzipSync} from 'node:zlib';
+import {taggerData} from './english-tagger.mjs';
 
 export function englishMorphology() {
   jsRealB.loadEn();
@@ -10,7 +11,7 @@ export function englishMorphology() {
   const verbs = new Map(), plurals = {}, degrees = {};
   for (const [lemma, word] of Object.entries(jsRealB.getLexicon())) {
     const verb = rules.conjugation[word.V?.tab];
-    if (verb && typeof verb.t.ps === 'string' && verb.t.p?.[2] && verb.t.pp && verb.t.pr) {
+    if (verb && [verb.t.ps,verb.t.p?.[2],verb.t.pp,verb.t.pr].every(v=>typeof v==='string')) {
       const endings = [verb.t.p[2], verb.t.ps, verb.t.pp, verb.t.pr];
       const stem = lemma.slice(0, lemma.length - verb.ending.length);
       const regular = defaults.regularVerb(lemma);
@@ -37,5 +38,5 @@ export function englishMorphology() {
     }
   }
   const groups = Array.from(verbs, ([key, words]) => [JSON.parse(key), words]);
-  return gzipSync(JSON.stringify({verbs:groups,plurals,degrees}), {level:9}).toString('base64');
+  return gzipSync(JSON.stringify({verbs:groups,plurals,degrees,...taggerData(jsRealB.getLexicon())}), {level:9}).toString('base64');
 }

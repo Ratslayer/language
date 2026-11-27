@@ -12,7 +12,15 @@ function encodeBytes(bytes) {
   return btoa(binary);
 }
 async function loadSqlite() {
-  const stream = new Blob([decodeBytes(sqliteGzip)]).stream().pipeThrough(new DecompressionStream('gzip'));
+  const digits=new Uint8Array(128);
+  for(let i=0;i<sqliteAlphabet.length;i++) digits[sqliteAlphabet.charCodeAt(i)]=i;
+  const bytes=new Uint8Array(sqliteGzip.length/5*4),view=new DataView(bytes.buffer);
+  for(let i=0;i<sqliteGzip.length;i+=5) {
+    let value=0;
+    for(let j=0;j<5;j++) value=value*85+digits[sqliteGzip.charCodeAt(i+j)];
+    view.setUint32(i/5*4,value);
+  }
+  const stream = new Blob([bytes.subarray(0,sqliteSize)]).stream().pipeThrough(new DecompressionStream('gzip'));
   return initSqlJs({wasmBinary:await new Response(stream).arrayBuffer()});
 }
 class PageFiles {
