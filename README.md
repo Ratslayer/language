@@ -7,6 +7,8 @@ For books written in English, the word popup shows the dictionary form in bold w
 
 Open the gear in the upper right and expand **Experiments** to change **Fallback to LLM when grammar is missing**. It starts unchecked. The reader first tries the local English rules, then displays any available book or saved annotation. The word popup identifies the source so you can see which forms the rules recognize. When grammar is unavailable, translations still work. The English inflection data is adapted at build time from the [jsRealB English lexicon and rules](https://github.com/rali-udem/jsRealB/tree/master/data), RALI, Université de Montréal, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
+English word taps use the selected occurrence and its surrounding sentence. The reader bundles the wink English part-of-speech lexicon and contextual tagging rules alongside the jsRealB inflection data. A word can show local grammar while its translation is loading or offline. Unrecognized words can still use a book or saved annotation.
+
 Enabling the fallback lets the reader ask Luna for missing English grammar and save the result for offline reading. Preparing an English page with the fallback enabled also adds per-token annotations in the optional `grammar` array, in source-token order.
 
 Tap 🔊 to hear the selected word or sentence in the book’s language. On AI Pages 0.3.3 or later, playback uses the phone's offline voice and works while a translation is loading. If the voice data is missing, tap **Install voice** and choose the language in Android's installer.

@@ -378,8 +378,7 @@ function rememberGrammar(target,card) {
     }).catch(report);
   }
 }
-async function completeGrammar(target,version,lookupError='') {
-  const active=()=>version===requestVersion;
+async function resolveLocalGrammar(target,version) {
   let card=target.grammar;
   let source=target.grammarSource;
   if (!card && files) {
@@ -387,20 +386,26 @@ async function completeGrammar(target,version,lookupError='') {
     catch { /* A saved translation remains usable if its local grammar is missing. */ }
     if (card) source='Saved grammar';
   }
-  if (!active()) return;
-  const lemma=target.lemma || card?.lemma;
-  if ((!card || !state.grammarFallback) && lemma) {
+  if (version!==requestVersion) return;
+  if (!card || !state.grammarFallback) {
     try {
-      const local=dictionaryGrammar(target.button.textContent,lemma,await englishDictionary());
+      const local=localEnglishGrammar(target.sentence,target.index,target.button.textContent,target.lemma || card?.lemma,await englishDictionary());
       if (local) {card=local; source='Local rules';}
     } catch { /* Stored annotations can still be displayed. */ }
   }
+  if (version!==requestVersion) return;
+  target.grammar=card;
+  target.grammarSource=source;
+  target.grammarMiss=!card && !state.grammarFallback ? 'The local rules could not identify this form. LLM fallback is off.' : '';
+  renderWordDetails();
+}
+async function completeGrammar(target,version,lookupError='') {
+  const active=()=>version===requestVersion;
+  await resolveLocalGrammar(target,version);
   if (!active()) return;
-  if (card || !state.grammarFallback || lookupError || !bridge) {
-    target.grammar=card;
-    target.grammarSource=source;
-    target.grammarMiss=!card && !state.grammarFallback ? 'The local rules could not identify this form. LLM fallback is off.' : '';
-    target.grammarError=card || target.grammarMiss ? '' : lookupError || 'This word has no saved grammar yet. Open the book in AI Pages to look it up.';
+  if (target.grammar || !state.grammarFallback) return;
+  if (lookupError || !bridge) {
+    target.grammarError=lookupError || 'This word has no saved grammar yet. Open the book in AI Pages to look it up.';
     renderWordDetails();
     return;
   }
@@ -410,7 +415,7 @@ async function completeGrammar(target,version,lookupError='') {
         selected:target.button.textContent,after:target.sentence.slice(target.index+target.button.textContent.length)});
     const raw=await enqueue(()=>active()?call('ai.run',{profile:'fast-text',prompt}):null);
     if (!active()) return;
-    card=cleanGrammar(typeof raw==='string' && parseModelObject(raw));
+    const card=cleanGrammar(typeof raw==='string' && parseModelObject(raw));
     if (!card) throw new Error('The grammar lookup returned an incomplete answer.');
     target.grammar=card;
     target.grammarSource='Luna';
@@ -458,6 +463,10 @@ async function lookup() {
   if (loadingEntries?.revision===pageVersion) {
     await loadingEntries.task;
     if (version!==requestVersion || display(preparedAnswer(target),'From book')) return;
+  }
+  if (english) {
+    await resolveLocalGrammar(target,version);
+    if (version!==requestVersion) return;
   }
   const requestGrammar=english && state.grammarFallback && !target.grammar;
   const instruction=full ? 'Translate the passage. Return only the translation.' : requestGrammar ?

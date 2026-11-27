@@ -32,14 +32,23 @@ function grammarLabel(card) {
   return [card.pos, card.form, card.tense && !card.form.includes(card.tense) ? card.tense : '']
     .filter(Boolean).join(', ');
 }
-let morphologyTask;
+let morphologyTask,englishRuleTables;
 function englishDictionary() {
   return morphologyTask ??= (async () => {
     const stream = new Blob([decodeBytes(englishMorphologyGzip)]).stream().pipeThrough(new DecompressionStream('gzip'));
-    const {verbs, plurals, degrees} = await new Response(stream).json();
+    const {verbs,plurals,degrees,lexicon,mass,rules}=JSON.parse(await new Response(stream).text(),
+      (key,value)=>key==='matches' ? new RegExp(...value) : value);
     const verbRules = new Map();
     for (const [rule,lemmas] of verbs) for (const lemma of lemmas) verbRules.set(lemma,rule);
-    return {verbRules,plurals:new Map(Object.entries(plurals)),degrees:new Map(Object.entries(degrees))};
+    englishRuleTables=rules;
+    const dictionary={verbRules,plurals:new Map(Object.entries(plurals)),degrees:new Map(Object.entries(degrees)),
+      tags:new Map(),mass:new Set(mass.split(' ')),inflections:new Map()};
+    for (const [names,words] of lexicon) {
+      const tags=names.split(' ');
+      for (const word of words.split(' ')) dictionary.tags.set(word,tags);
+    }
+    indexEnglishForms(dictionary);
+    return dictionary;
   })();
 }
 function regularPlural(lemma) {

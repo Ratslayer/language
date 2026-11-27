@@ -122,7 +122,9 @@ def verify_english_rules(browser):
         note:'Through marks the route they took.'}],
       ['She sings better.', 'better', 'well', {lemma:'well',pos:'adverb',form:'comparative',
         note:'Better describes how she sings.'}],
-      ['An avid reader.', 'avid', 'avid', null]
+      ['An avid reader.', 'avid', 'avid', null],
+      ['She said “flarnix”.', 'flarnix', 'flarnix', null],
+      ['She said “zandor”.', 'zandor', 'zandor', {lemma:'zandor',pos:'noun',form:'singular',note:'A fictional name.'}]
     ];
     window.testRows=examples.map(([text,word,lemma,grammar],id)=>{
       const tokens=Array.from(new Intl.Segmenter('en',{granularity:'word'}).segment(text)).filter(t=>t.isWordLike);
@@ -154,7 +156,7 @@ def verify_english_rules(browser):
     expect(page.locator("#popup")).to_be_visible()
     page.get_by_role("button", name="eaten", exact=True).tap()
     expect(label).to_contain_text("past participle, past perfect")
-    expect(page.locator("#grammarSource")).to_have_text("From book")
+    expect(page.locator("#grammarSource")).to_have_text("Local rules")
     rules.tap()
     expect(table.locator("[aria-current=true] td")).to_have_text("had eaten")
     dialog.locator("select").select_option("present simple")
@@ -166,7 +168,7 @@ def verify_english_rules(browser):
     expect(page.locator("#wordDetails")).to_be_hidden()
     page.locator("#sentence").tap()
     expect(rules).to_be_visible()
-    for word, note in [("through", "route"), ("better", "sings")]:
+    for word, note in [("through", "preposition"), ("better", "adverb")]:
         page.get_by_role("button", name=word, exact=True).tap()
         rules.tap()
         expect(dialog.locator("#ruleNote")).to_contain_text(note)
@@ -177,6 +179,11 @@ def verify_english_rules(browser):
         dialog.locator("#closeRules").tap()
     assert page.evaluate("replies.length") == 0
     page.get_by_role("button", name="avid", exact=True).tap()
+    expect(label).to_have_text("adjective, base form")
+    expect(page.locator("#grammarSource")).to_have_text("Local rules")
+    page.get_by_role("button", name="zandor", exact=True).tap()
+    expect(page.locator("#grammarSource")).to_have_text("From book")
+    page.get_by_role("button", name="flarnix", exact=True).tap()
     expect(page.locator("#meaning")).to_have_text("gloss")
     rules.tap()
     expect(label).to_have_text("No local grammar")
@@ -202,12 +209,12 @@ def verify_english_rules(browser):
     page.get_by_text("Experiments", exact=True).tap()
     expect(checkbox).to_be_checked()
     page.keyboard.press("Escape")
-    page.get_by_role("button", name="avid", exact=True).tap()
+    page.get_by_role("button", name="flarnix", exact=True).tap()
     rules.tap()
     page.wait_for_function("replies.length === 1")
-    page.evaluate("""replies.shift()(JSON.stringify({lemma:'avid',pos:'adjective',form:'base form',
-      note:'Avid describes the reader.'}))""")
-    expect(dialog.locator("#ruleNote")).to_contain_text("describes the reader")
+    page.evaluate("""replies.shift()(JSON.stringify({lemma:'flarnix',pos:'adjective',form:'base form',
+      note:'A fictional adjective.'}))""")
+    expect(dialog.locator("#ruleNote")).to_contain_text("fictional adjective")
     expect(page.locator("#grammarSource")).to_have_text("Luna")
     dialog.locator("#closeRules").tap()
     settings.tap()
@@ -215,7 +222,7 @@ def verify_english_rules(browser):
     page.locator("#closeSettings").tap()
     page.wait_for_function("!history.state?.languageSettings")
     page.reload()
-    page.get_by_role("button", name="avid", exact=True).tap()
+    page.get_by_role("button", name="flarnix", exact=True).tap()
     expect(label).to_have_text("adjective, base form")
     expect(page.locator("#grammarSource")).to_have_text("Saved grammar")
     settings.tap()
@@ -242,10 +249,11 @@ def verify_live_english(browser):
     for i, answer in enumerate(answers):
         saw.nth(i).tap()
         page.wait_for_function("replies.length === 1")
-        assert "grammar" in page.evaluate("calls.filter(q=>q.method==='ai.run').at(-1).prompt")
+        assert "{translation,lemma}" in page.evaluate("calls.filter(q=>q.method==='ai.run').at(-1).prompt")
+        expect(page.locator("#grammarSource")).to_have_text("Local rules")
         page.locator("#rules").tap()
         page.evaluate("raw=>replies.shift()(raw)", json.dumps(answer))
-        expect(page.locator("#ruleNote")).to_have_text(answer["grammar"]["note"])
+        expect(page.locator("#ruleLabel")).to_contain_text(answer["grammar"]["pos"])
         expect(page.locator("#grammarTable tr[aria-current=true] td")).to_have_text("saw")
         page.locator("#closeRules").tap()
         expect(page.locator("#meaning")).to_have_text(answer["translation"])
@@ -268,13 +276,25 @@ def verify_translation_only(browser):
           grammar:{lemma:'unexpected',pos:'noun',form:'singular',note:'Unrequested AI grammar.'}}))""", [lemma, gloss])
         expect(page.locator("#meaning")).to_have_text(gloss)
         expect(page.locator("#word")).to_have_text(lemma)
-        if word == "feet":
-            expect(page.locator("#grammarSource")).to_have_text("Local rules")
-        else:
-            expect(page.locator("#grammarLabel")).to_have_text("No local grammar")
-            page.locator("#rules").tap()
-            expect(page.locator("#retryRules")).to_be_hidden()
+        expect(page.locator("#grammarSource")).to_have_text("Local rules")
     assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 2
+    page.close()
+
+
+def verify_grammar_without_translation(browser):
+    page = open_reader(browser, """window.testSource='en';window.testTarget='ru';
+      window.fixture={name:'local.txt',text:'The quiet children walked slowly through the garden.'};""")
+    page.get_by_role("button", name="children", exact=True).tap()
+    expect(page.locator("#grammarLabel")).to_have_text("noun, plural")
+    expect(page.locator("#meaning")).to_have_text("Translating…")
+    page.locator("#rules").tap()
+    expect(page.locator("#grammarTable td")).to_have_text(["child", "children"])
+    page.evaluate("""()=>{const q=calls.find(q=>q.method==='ai.run');
+      AiPages.onmessage({data:JSON.stringify({id:q.id,error:'HTTP 403'})});}""")
+    expect(page.locator("#meaning")).to_have_text("HTTP 403")
+    expect(page.locator("#grammarSource")).to_have_text("Local rules")
+    expect(page.locator("#retryRules")).to_be_hidden()
+    assert page.evaluate("calls.filter(q=>q.method==='ai.run').length") == 1
     page.close()
 
 
@@ -318,9 +338,9 @@ def verify_page_preparation(browser):
 
 def verify_dialog_height(browser):
     page = open_reader(browser, """window.testSource='en';window.testTarget='ru';window.testFallback=true;
-      window.fixture={name:'test.txt',text:'She had already eaten.'};""")
+      window.fixture={name:'test.txt',text:'She had already flarned.'};""")
     dialog = page.locator("#grammarDialog")
-    page.get_by_role("button", name="eaten", exact=True).tap()
+    page.get_by_role("button", name="flarned", exact=True).tap()
     page.locator("#rules").tap()
 
     def dimensions():
@@ -347,7 +367,7 @@ def verify_dialog_height(browser):
     dialog.locator("#retryRules").tap()
     expect(dialog.locator("#ruleNote")).to_have_text("Checking grammar…")
     page.wait_for_function("replies.length===2")
-    page.evaluate("""replies.pop()(JSON.stringify({translation:'поела',grammar:{lemma:'eat',pos:'verb',
+    page.evaluate("""replies.pop()(JSON.stringify({translation:'example',grammar:{lemma:'flarn',pos:'verb',
       form:'past participle',tense:'past perfect',subject:'3s',note:'The meal happened before another past event.'}}))""")
     expect(dialog.locator("tbody tr")).to_have_count(6)
     card_height = fits()
@@ -377,6 +397,7 @@ if __name__ == "__main__":
             verify_english_rules(browser)
             verify_live_english(browser)
             verify_translation_only(browser)
+            verify_grammar_without_translation(browser)
             verify_shelf_settings(browser)
             verify_page_preparation(browser)
             verify_dialog_height(browser)
